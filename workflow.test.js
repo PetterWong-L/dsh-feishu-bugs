@@ -20,3 +20,11 @@ test('pruneUnstarted removes only untouched imported items outside the filter', 
   const kept = pruneUnstarted(bugs, ['a']);
   assert.deepEqual(kept.map(b => b.id), ['a','b','d','e','f']);
 });
+test('passing verification hands the closed bug to the workspace cleanup hook',async()=>{
+ const closed=[];const state={bugs:[],audit:[]};
+ const w=new Workflow(state,{save:async()=>{},prepare:async b=>({branch:`fix/feishu-${b.id}`,cwd:'/tmp/isolated'}),launch:async()=>({taskId:'task-1',workspaceId:'ws-1'}),afterClose:async b=>{closed.push(b.id);b.workspaceId=undefined;}});
+ await w.sync([{id:'1',title:'crash'}]);await w.start('1');await w.outcome('task-1','succeeded','ok');
+ await w.verify('1',false,true);assert.deepEqual(closed,[]);
+ state.bugs[0].status='awaiting-verification';
+ await w.verify('1',true,true);assert.deepEqual(closed,['1']);assert.equal(state.bugs[0].workspaceId,undefined);
+});

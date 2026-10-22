@@ -2,6 +2,11 @@
 
 采用 `主版本.次版本.补丁`。破坏性兼容变更升次版本，并在此标注受影响的 DSH / Meegle CLI 范围。
 
+## 1.1.1
+
+- 验收通过后自动把该 bug 的 workspace 从 DSH 侧栏移除（worktree、分支、会话日志都保留），避免每修一个缺陷就永久多一个工作区。重试会按需重新注册工作区。
+- 运行中的会话不会被移除；只有已结束且你点了“通过”的 bug 才清理。
+
 ## 1.1.0
 
 - 修复前自动下载缺陷附件里的截图（`workitem get --fields _all` 找到附件字段，`attachment +download` 落到 worktree 的 `.feishu-attachments/`），并把本地路径写进修复提示词，让修复会话先看图再动手。

@@ -47,7 +47,9 @@ export class Workflow {
   }); }
   verify(id,passed,owner) { return this.locked(async()=>{
     if(!owner)throw Error('owner confirmation required');const b=this.bug(id);if(b.status!=='awaiting-verification')throw Error('not awaiting verification');
-    b.status=passed?'verified':'changes-requested';await this.record(passed?'verified':'changes-requested',b);return b;
+    b.status=passed?'verified':'changes-requested';await this.record(passed?'verified':'changes-requested',b);
+    if(passed&&this.deps.afterClose)await this.deps.afterClose(b);
+    return b;
   }); }
 }
 export function pruneUnstarted(bugs,keepIds) {

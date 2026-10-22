@@ -40,7 +40,15 @@ export async function apply(ctx,config={}) {
   await board.apply(`feishu-create-${taskId}`,{kind:'create',id:taskId,input:{title:`[Feishu ${b.remoteId}] ${b.title}`,description:`${b.id} · ${b.branch} · human verification required; never auto-merge`,prompt,workspaceId:workspace.id,permission:'workspace-write',reuseSession:false,teamRun:false,goalRun:false,integrations:{'feishu-bugs':{bugId:b.id}}}},'feishu-bugs');
   await board.apply(`feishu-run-${taskId}`,{kind:'run',taskId},'feishu-bugs');return {taskId,workspaceId:workspace.id};
  }
- const workflow=new Workflow(state,{save,prepare:b=>prepareBranch(b.repo,join(dir,'worktrees'),b),launch});
+ async function dropWorkspace(b){
+  if(!b?.workspaceId||typeof ctx.workspaceRegistry?.delete!=='function')return;
+  const task=board.snapshot().tasks.find(t=>t.id===b.taskId);
+  if(task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt)))return;
+  try{await ctx.workspaceRegistry.delete(b.workspaceId);}catch{return;}
+  b.previousWorkspaceIds=[...(b.previousWorkspaceIds??[]),b.workspaceId];b.workspaceId=undefined;
+  state.audit.push({time:new Date().toISOString(),action:'workspace-removed',id:b.id});state.audit=state.audit.slice(-1000);await save();
+ }
+ const workflow=new Workflow(state,{save,prepare:b=>prepareBranch(b.repo,join(dir,'worktrees'),b),launch,afterClose:dropWorkspace});
  // Restart never blindly replays branch creation or launches a second session.
  for(const b of state.bugs){
   const task=board.snapshot().tasks.find(t=>t.id===b.taskId);
