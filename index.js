@@ -6,6 +6,7 @@ import {prepareBranch,validateWorktree} from './git.js';
 import {DeviceAuth} from './auth.js';
 import {MeegleAPI} from './meegle.js';
 import {registerRoute} from './http.js';
+import {scrub} from './scrub.js';
 export const name='feishu-bugs';
 export const inject=['taskBoard','workspaceRegistry','webServer','connection','tools'];
 export async function apply(ctx,config={}) {
@@ -22,7 +23,7 @@ export async function apply(ctx,config={}) {
  const catalog=stored?.projectKey&&stored.projects?.length?stored:(seeded??stored??{projects:[],types:[],projectKey:null});
  if(catalog!==stored){state.catalog=catalog;await save();}
  let stopped=false,queue=false,active=false;
- const snapshot=()=>({version:2,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30)});
+ const snapshot=()=>scrub({version:2,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30)});
  const ownerSnapshot=()=>({...snapshot(),auth:auth.ownerView()});
  const hasOpen=task=>task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt));
  function assertNoOpen(){if(state.bugs.some(b=>[b.taskId,...(b.previousTaskIds??[])].some(id=>hasOpen(board.snapshot().tasks.find(t=>t.id===id)))))throw Error('An existing execution is still open; use task board to inspect/stop it before retrying');}
@@ -45,7 +46,7 @@ export async function apply(ctx,config={}) {
   const task=board.snapshot().tasks.find(t=>t.id===b.taskId);
   if(task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt)))return;
   try{await ctx.workspaceRegistry.delete(b.workspaceId);}catch{return;}
-  b.previousWorkspaceIds=[...(b.previousWorkspaceIds??[]),b.workspaceId];b.workspaceId=undefined;
+  b.previousWorkspaceIds=[...(b.previousWorkspaceIds??[]),b.workspaceId];delete b.workspaceId;
   state.audit.push({time:new Date().toISOString(),action:'workspace-removed',id:b.id});state.audit=state.audit.slice(-1000);await save();
  }
  const workflow=new Workflow(state,{save,prepare:b=>prepareBranch(b.repo,join(dir,'worktrees'),b),launch,afterClose:dropWorkspace});
