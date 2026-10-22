@@ -65,3 +65,12 @@ export async function checkoutBranch(repo,branch){
     throw Error(/already checked out|already used by worktree|is checked out at/i.test(text)?'That branch is still checked out in its worktree':'Could not switch the main repository: '+text.split('\n').filter(Boolean)[0]);
   }
 }
+
+export async function commitAll(cwd,message){
+  await excludePath(cwd,'.feishu-attachments/');
+  await git(cwd,['add','-A']);
+  const staged=await git(cwd,['diff','--cached','--name-only']);
+  if(!staged)throw Error('Nothing to commit in this worktree');
+  await git(cwd,['commit','-m',message.slice(0,200)]);
+  return git(cwd,['rev-parse','HEAD']);
+}

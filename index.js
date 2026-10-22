@@ -2,7 +2,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {openStore,resolveStorageDir} from './store.js';
 import {Workflow,pruneUnstarted} from './workflow.js';
-import {prepareBranch,validateWorktree,headCommit,changedPaths,detachWorktree,checkoutBranch,excludePath} from './git.js';
+import {prepareBranch,validateWorktree,headCommit,changedPaths,detachWorktree,checkoutBranch,excludePath,commitAll} from './git.js';
 import {DeviceAuth} from './auth.js';
 import {MeegleAPI} from './meegle.js';
 import {registerRoute} from './http.js';
@@ -80,6 +80,10 @@ export async function apply(ctx,config={}) {
  await reconcile();
  // Workspaces registered before this cleanup existed (or whose delete failed) must not linger forever.
  for(const b of state.bugs)if(b.status==='verified')await dropWorkspace(b);
+ // Older runs left their work uncommitted; refresh what each worktree actually holds so the
+ // panel can offer commit-then-checkout instead of showing stale emptiness.
+ for(const b of state.bugs.filter(x=>x.cwd&&!hasOpen(board.snapshot().tasks.find(t=>t.id===x.taskId))))Object.assign(b,await inspectWorktree(b));
+ await save();
  let actionTail=Promise.resolve();
  async function action(args){
   // Owner cancellation must interrupt CLI I/O, not wait behind the action queue.
@@ -118,6 +122,16 @@ export async function apply(ctx,config={}) {
    if(args.action==='start'){if(state.bugs.some(b=>['running','preparing'].includes(b.status)))throw Error('One bug is already running');return workflow.start(args.id);}
    if(args.action==='queue'){queue=args.enabled===true;await pump();return;}
    if(args.action==='retry')return workflow.retry(args.id,args.feedback,launch);
+  if(args.action==='commit'){
+   const b=state.bugs.find(x=>x.id===args.id);if(!b?.cwd)throw Error('This bug has no worktree');
+   if(hasOpen(board.snapshot().tasks.find(t=>t.id===b.taskId)))throw Error('An execution is still running for this bug');
+   await validateWorktree(b);
+   const head=await commitAll(b.cwd,`fix(feishu-${b.remoteId}): ${String(b.title??'').slice(0,120)}`);
+   Object.assign(b,await inspectWorktree(b));
+   state.audit.push({time:new Date().toISOString(),action:'branch-committed',id:b.id});state.audit=state.audit.slice(-1000);
+   if(!b.commit)b.commit=head;
+   await save();return;
+  }
   if(args.action==='checkout'){
    const b=state.bugs.find(x=>x.id===args.id);if(!b?.branch)throw Error('This bug has no branch yet');
    const target=args.target==='develop'?'develop':b.branch;
