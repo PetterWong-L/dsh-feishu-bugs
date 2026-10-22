@@ -44,6 +44,9 @@ export async function apply(ctx,config={}) {
  }
  async function dropWorkspace(b){
   if(!b?.workspaceId||typeof ctx.workspaceRegistry?.delete!=='function')return;
+  // Deleting the registration also removes the workspace directory. Only retire a worktree
+  // whose work is already committed on the branch; otherwise the fix would be destroyed.
+  if(b.dirty>0||!b.commit)return;
   const task=board.snapshot().tasks.find(t=>t.id===b.taskId);
   if(task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt)))return;
   try{await ctx.workspaceRegistry.delete(b.workspaceId);}catch{return;}
