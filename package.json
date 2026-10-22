@@ -61,5 +61,13 @@
     "meegle",
     "bug-workflow",
     "plugin"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PetterWong-L/dsh-feishu-bugs.git"
+  },
+  "homepage": "https://github.com/PetterWong-L/dsh-feishu-bugs#readme",
+  "bugs": {
+    "url": "https://github.com/PetterWong-L/dsh-feishu-bugs/issues"
+  }
 }

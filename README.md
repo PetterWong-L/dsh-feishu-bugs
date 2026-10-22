@@ -44,7 +44,7 @@
 前置：DSH `>= 0.2.1-rc.2`，已安装并启用 DSH 任务面板插件（`@linxin666/dsh-client-ui-task-board`）。
 
 ```sh
-git clone https://github.com/<owner>/dsh-feishu-bugs.git
+git clone https://github.com/PetterWong-L/dsh-feishu-bugs.git
 cd dsh-feishu-bugs
 npm install --omit=dev
 ```
@@ -53,7 +53,7 @@ npm install --omit=dev
 
 数据默认写入 `~/.dsh/feishu-bugs-data`；如需自定义，在 bundle 配置里设置绝对路径 `storageDir`。
 
-升级：拉取新版本后重启 DSH。执行状态、分支与选择都会持久化，重启不会重放分支创建。
+升级：拉取新版本后重启 DSH。执行状态、分支与选择都会持久化，重启不会重放分支创建。0.x 版本把数据放在 `~/dsh/feishu-bugs-data`，1.0 会一次性接管该目录，不会显示成空队列。
 
 卸载：在插件管理里禁用/移除该 bundle；数据目录不会自动删除。
 

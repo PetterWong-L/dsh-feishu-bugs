@@ -1,7 +1,6 @@
 import {join} from 'node:path';
-import {homedir} from 'node:os';
 import {randomUUID} from 'node:crypto';
-import {openStore} from './store.js';
+import {openStore,resolveStorageDir} from './store.js';
 import {Workflow,pruneUnstarted} from './workflow.js';
 import {prepareBranch,validateWorktree} from './git.js';
 import {DeviceAuth} from './auth.js';
@@ -10,7 +9,7 @@ import {registerRoute} from './http.js';
 export const name='feishu-bugs';
 export const inject=['taskBoard','workspaceRegistry','webServer','connection','tools'];
 export async function apply(ctx,config={}) {
- const dir=config.storageDir??join(homedir(),'.dsh','feishu-bugs-data'),store=await openStore(dir),state=store.state,board=ctx.get('taskBoard');
+ const dir=resolveStorageDir(config),store=await openStore(dir),state=store.state,board=ctx.get('taskBoard');
  const listeners=new Set();
  const save=async()=>{await store.save();for(const fn of listeners)fn();};
  const subscribe=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
