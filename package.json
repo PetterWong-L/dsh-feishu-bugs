@@ -1,0 +1,65 @@
+{
+  "name": "@local/feishu-bugs",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "description": "Feishu Project bug workflow with isolated worktrees and human review gates.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "auth.js",
+    "cli.js",
+    "mql.js",
+    "meegle.js",
+    "git.js",
+    "store.js",
+    "workflow.js",
+    "http.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test *.test.js",
+    "check": "node --check index.js && node --check client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@linxin666/dsh-client-ui-task-board"
+      ]
+    },
+    "engines": {
+      "dsh": ">=0.2.1-rc.2"
+    }
+  },
+  "dependencies": {
+    "@lark-project/meegle": "1.0.27",
+    "qrcode": "1.5.4"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "feishu",
+    "meegle",
+    "bug-workflow",
+    "plugin"
+  ]
+}

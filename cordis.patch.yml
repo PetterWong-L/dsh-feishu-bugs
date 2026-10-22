@@ -1,0 +1,4 @@
+- insert:
+    - id: local-feishu-bugs
+      name: '@local/feishu-bugs'
+      # storageDir defaults to ~/.dsh/feishu-bugs-data when omitted.
