@@ -13,3 +13,40 @@ test('project search uses the real named projects collection, carries simple nam
 });
 test('runtime help must prove command flags, no guessed type-key arguments',async()=>{const calls=[];const api=new MeegleAPI(async(args)=>{calls.push(args);if(args.includes('--help'))return '--unknown string';throw Error('must not invoke business command');});await assert.rejects(api.types('oog'),/project-key/);assert.equal(calls.length,1);});
 test('catalog normalizes explicit type keys only',async()=>{const api=new MeegleAPI(async(args)=>args.includes('--help')?'--project-key string':{list:[{work_item_type_key:'bug',name:'缺陷'}]});assert.deepEqual(await api.types('oog'),[{key:'bug',name:'缺陷'}]);});
+test('downloads image attachments into the worktree with sanitized, non-traversing names',async()=>{
+ const {mkdtemp,readdir,rm,writeFile}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const dir=await mkdtemp(join(tmpdir(),'fb-att-'));const calls=[];
+ const api=new MeegleAPI(async args=>{
+  if(args[0]==='workitem'&&args[1]==='get')return {work_item_fields:[{key:'multi_attachment',name:'多个附件',value:[
+   {url:'https://project.feishu.cn/goapi/1',name:'shot one.png',type:'image/png'},
+   {url:'https://project.feishu.cn/goapi/2',name:'../../evil.png',type:'image/png'},
+   {url:'https://project.feishu.cn/goapi/3',name:'report.pdf',type:'application/pdf'}]}]};
+  if(args[0]==='attachment'&&args[1]==='+download'){calls.push(args);const i=args.indexOf('--output');await writeFile(args[i+1],Buffer.alloc(8));return {path:args[i+1],size:8};}
+  throw Error('unexpected '+args.join(' '));
+ });
+ const r=await api.attachments('proj','123',dir);
+ assert.equal(r.found,3);assert.equal(r.files.length,2);assert.equal(r.skipped.length,1);assert.equal(r.skipped[0].name,'report.pdf');
+ assert.match(r.files[0].path,/01-shot-one\.png$/);assert.match(r.files[1].path,/02-evil\.png$/);
+ assert.equal(calls[0][2].startsWith('https://project.feishu.cn/goapi/'),true);
+ assert.deepEqual((await readdir(join(dir,'.feishu-attachments'))).sort(),['01-shot-one.png','02-evil.png']);
+ await rm(dir,{recursive:true,force:true});
+});
+test('attachment download caps the batch and reports failures without losing the rest',async()=>{
+ const {mkdtemp,writeFile}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const dir=await mkdtemp(join(tmpdir(),'fb-att-'));const many=Array.from({length:7},(_,i)=>({url:`https://project.feishu.cn/goapi/${i}`,name:`s${i}.jpg`,type:'image/jpeg'}));
+ const api=new MeegleAPI(async args=>{
+  if(args[0]==='workitem'&&args[1]==='get')return {work_item_fields:[{key:'multi_attachment',value:many}]};
+  if(args[0]==='attachment'&&args[1]==='+download'){const i=args.indexOf('--output');if(args[2].endsWith('/1'))throw Error('CLIENT_FILE_SIGN_MISMATCH');await writeFile(args[i+1],Buffer.alloc(4));return {};}
+  throw Error('unexpected');
+ });
+ const r=await api.attachments('proj','9',dir);
+ assert.equal(r.found,7);assert.equal(r.files.length,5);assert.equal(r.skipped.length,2);
+ assert.equal(r.skipped[0].name,'s1.jpg');assert.match(r.skipped[0].reason,/failed/i);
+ assert.equal(r.skipped[1].name,'s6.jpg');assert.match(r.skipped[1].reason,/limit/i);
+});
+test('no attachment fields means no download calls',async()=>{
+ const dir='/tmp/does-not-matter';let downloads=0;
+ const api=new MeegleAPI(async args=>{if(args[0]==='workitem')return {work_item_fields:[{key:'description',value:''}]};downloads++;return {};});
+ const r=await api.attachments('proj','1',dir);
+ assert.deepEqual(r.files,[]);assert.equal(r.found,0);assert.equal(downloads,0);
+});

@@ -1,8 +1,13 @@
 import {runCli} from './cli.js';
+import {mkdir,stat,rm} from 'node:fs/promises';
+import {basename,join} from 'node:path';
 import {identifier,queryPage,decodeRow} from './mql.js';
 const key=s=>typeof s==='string'&&/^[\w-]{1,160}$/.test(s);
 const unwrap=v=>{if(v?.error||v?.err_code)throw Error('Meegle rejected this read; check account permissions');return v?.data??v;};
 const MAX_ITEMS=200;
+const IMAGE_TYPES={'image/png':'.png','image/jpeg':'.jpg','image/jpg':'.jpg','image/gif':'.gif','image/webp':'.webp','image/heic':'.heic'};
+const MAX_ATTACHMENTS=5,MAX_ATTACHMENT_BYTES=20*1024*1024;
+function safeName(name,ext){const base=basename(String(name)).replace(/[^\w.\-]+/g,'-').replace(/^[-._]+/,'').slice(0,60);const stem=base.replace(/\.[A-Za-z0-9]{1,8}$/,'');return `${stem||'attachment'}${ext}`;}
 export function rows(value,collection='list'){
  const d=unwrap(value),list=Array.isArray(d)?d:(d?.[collection]??d?.list);
  if(!Array.isArray(list))throw Error('Unsupported official CLI list shape; no data imported');
@@ -72,5 +77,29 @@ export class MeegleAPI{
   }
   return {items:result,total,truncated:total>result.length,breakdown};
 
+ }
+ async attachments(projectKey,remoteId,dest){
+  if(!key(projectKey)||!key(String(remoteId)))throw Error('Invalid work item for attachments');
+  if(typeof dest!=='string'||!dest)throw Error('Invalid attachment destination');
+  const raw=await this.run(['workitem','get','--project-key',projectKey,'--work-item-id',String(remoteId),'--fields','_all','--auto-paginate']);
+  const d=unwrap(raw),fields=Array.isArray(d?.work_item_fields)?d.work_item_fields:[],entries=[];
+  for(const f of fields)if(Array.isArray(f?.value))for(const v of f.value)if(v&&typeof v.url==='string'&&v.url.startsWith('https://project.feishu.cn/')&&typeof v.name==='string')entries.push({url:v.url,name:v.name,type:typeof v.type==='string'?v.type:''});
+  const dir=join(dest,'.feishu-attachments');
+  if(!entries.length)return {dir,files:[],skipped:[],found:0};
+  await mkdir(dir,{recursive:true});
+  const files=[],skipped=[];
+  for(const e of entries){
+   const ext=IMAGE_TYPES[e.type];
+   if(!ext){skipped.push({name:e.name,reason:'unsupported attachment type'});continue;}
+   if(files.length>=MAX_ATTACHMENTS){skipped.push({name:e.name,reason:'attachment limit reached'});continue;}
+   const target=join(dir,`${String(files.length+1).padStart(2,'0')}-${safeName(e.name,ext)}`);
+   try{
+    await this.run(['attachment','+download',e.url,'--project-key',projectKey,'--work-item-id',String(remoteId),'--output',target,'--overwrite']);
+    const info=await stat(target);
+    if(info.size>MAX_ATTACHMENT_BYTES){await rm(target,{force:true});skipped.push({name:e.name,reason:'attachment too large'});continue;}
+    files.push({path:target,name:e.name,type:e.type,size:info.size});
+   }catch{skipped.push({name:e.name,reason:'download failed'});}
+  }
+  return {dir,files,skipped,found:entries.length};
  }
 }

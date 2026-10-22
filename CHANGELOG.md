@@ -2,6 +2,12 @@
 
 采用 `主版本.次版本.补丁`。破坏性兼容变更升次版本，并在此标注受影响的 DSH / Meegle CLI 范围。
 
+## 1.1.0
+
+- 修复前自动下载缺陷附件里的截图（`workitem get --fields _all` 找到附件字段，`attachment +download` 落到 worktree 的 `.feishu-attachments/`），并把本地路径写进修复提示词，让修复会话先看图再动手。
+- 限制：只取 PNG/JPEG/GIF/WebP/HEIC，最多 5 张、单张 20MB；附件是不可信数据，提示词明确要求不得提交进仓库。
+- 下载失败不阻塞修复，但会把失败的文件名与原因写进提示词，避免代理凭空猜测截图内容。
+
 ## 1.0.1 — 构建验证优先走 Xcode MCP
 
 - 修复任务的提示词要求先检查当前会话是否连上 Xcode MCP（`mcp__xcode__*`）。已连接时用 MCP 发现 scheme、执行构建并读取构建日志；只有在没有 Xcode MCP 工具或 MCP 调用失败时，才退回 `xcrun xcodebuild` 命令行。
