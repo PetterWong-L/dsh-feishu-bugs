@@ -68,6 +68,8 @@ export async function apply(ctx,config={}) {
  let reconcileTail=Promise.resolve();
  ctx.effect(()=>board.subscribe(()=>{reconcileTail=reconcileTail.then(reconcile).catch(()=>{queue=false;});}));
  await reconcile();
+ // Workspaces registered before this cleanup existed (or whose delete failed) must not linger forever.
+ for(const b of state.bugs)if(b.status==='verified')await dropWorkspace(b);
  let actionTail=Promise.resolve();
  async function action(args){
   // Owner cancellation must interrupt CLI I/O, not wait behind the action queue.
