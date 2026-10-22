@@ -2,6 +2,14 @@
 
 采用 `主版本.次版本.补丁`。破坏性兼容变更升次版本，并在此标注受影响的 DSH / Meegle CLI 范围。
 
+## 1.2.0
+
+- 修复只能合并后才能验证的问题：agent 现在必须在修复分支上提交（不推送、不合并），面板显示提交号。
+- 「待你验证」新增「在主仓检出该分支」：先让 worktree 进入游离状态释放分支，再在干净的主仓 checkout，Podfile 与 Pods 都还在，可直接构建运行。
+- 「验证通过」后新增「主仓切回 develop」。
+- 主仓有未提交改动时拒绝切换；worktree 仍有未提交改动时也拒绝，并提示先重试让 agent 提交。
+- `.feishu-attachments/` 自动写入仓库 `info/exclude`，`git add -A` 不会带入截图。
+
 ## 1.1.3
 
 - 修复工作区清理后 `feishu_bug_status` 返回非法 JSON 的问题：快照会剔除 `undefined` 成员，工作区 id 改为真正删除。
