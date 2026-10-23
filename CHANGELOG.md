@@ -2,6 +2,11 @@
 
 采用 `主版本.次版本.补丁`。破坏性兼容变更升次版本，并在此标注受影响的 DSH / Meegle CLI 范围。
 
+## 1.8.1
+
+- 已存在的 worktree 也能补齐构建前置：缺陷行新增「补齐构建前置」，复制 `.xcworkspace` 并在锁文件一致时链接 `Pods`。
+- 说明文案明确：验收时用 Xcode 打开 **worktree 里的** `.xcworkspace`，编译的才是该分支源码；打开主仓工程编译的是 develop。
+
 ## 1.8.0
 
 - 新建 worktree 时自动预置被 gitignore 的构建前置：复制 `*.xcworkspace`（体积小、路径相对，指向 worktree 自身的工程），并在 `Podfile.lock` 与主仓 `Pods/Manifest.lock` 完全一致时用符号链接接上 `Pods`，避免每个任务重复拷贝几百 MB。

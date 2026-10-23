@@ -2,7 +2,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {openStore,resolveStorageDir} from './store.js';
 import {Workflow,pruneUnstarted,markGone,cleanNote} from './workflow.js';
-import {prepareBranch,validateWorktree,headCommit,changedPaths,detachWorktree,checkoutBranch,excludePath,commitAll} from './git.js';
+import {prepareBranch,validateWorktree,headCommit,changedPaths,detachWorktree,checkoutBranch,excludePath,commitAll,provisionWorktree} from './git.js';
 import {DeviceAuth} from './auth.js';
 import {MeegleAPI} from './meegle.js';
 import {registerRoute} from './http.js';
@@ -174,6 +174,11 @@ export async function apply(ctx,config={}) {
    state.audit.push({time:new Date().toISOString(),action:'branch-committed',id:b.id});state.audit=state.audit.slice(-1000);
    if(!b.commit)b.commit=head;
    await save();return;
+  }
+  if(args.action==='provision'){
+   const b=state.bugs.find(x=>x.id===args.id);if(!b?.cwd||!b?.repo)throw Error('This bug has no worktree to provision');
+   const result=await provisionWorktree(b.repo,b.cwd);
+   b.provision=result.provision??'already provisioned';await save();return result;
   }
   if(args.action==='checkout'){
    const b=state.bugs.find(x=>x.id===args.id);if(!b?.branch)throw Error('This bug has no branch yet');
