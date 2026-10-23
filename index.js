@@ -1,7 +1,7 @@
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {openStore,resolveStorageDir} from './store.js';
-import {Workflow,pruneUnstarted} from './workflow.js';
+import {Workflow,pruneUnstarted,markGone} from './workflow.js';
 import {prepareBranch,validateWorktree,headCommit,changedPaths,detachWorktree,checkoutBranch,excludePath,commitAll} from './git.js';
 import {DeviceAuth} from './auth.js';
 import {MeegleAPI} from './meegle.js';
@@ -119,15 +119,26 @@ export async function apply(ctx,config={}) {
     // A complete (untruncated) sync is authoritative for untouched imports: items
     // outside the current filter disappear instead of lingering from an older sync.
     let pruned=0;
-    if(!result.truncated){const before=state.bugs.length;state.bugs=pruneUnstarted(state.bugs,result.items.map(i=>i.id));pruned=before-state.bugs.length;}
+    if(!result.truncated){
+     const keepIds=result.items.map(i=>i.id),before=state.bugs.length;
+     state.bugs=pruneUnstarted(state.bugs,keepIds);pruned=before-state.bugs.length;
+     markGone(state.bugs,keepIds);
+    }
     state.selection=selection;state.sync={total:result.total,imported:result.items.length,truncated:result.truncated,pruned,breakdown:result.breakdown,at:new Date().toISOString()};await save();return;
+   }
+   if(args.action==='remove'){
+    const b=state.bugs.find(item=>item.id===args.id);
+    if(!b)throw Error('No such bug in this panel');
+    if(!b.gone)throw Error('Only items that left the current filter can be removed');
+    if(b.status==='running'||hasOpen(board.snapshot().tasks.find(t=>t.id===b.taskId)))throw Error('An execution is still running for this bug');
+    state.bugs=state.bugs.filter(item=>item.id!==b.id);state.audit.push({time:new Date().toISOString(),action:'removed',id:b.id});await save();return;
    }
    if(args.action==='decide')return workflow.decide(args.id,args.decision,true);
    if(args.action==='verify'){
     if(typeof args.passed!=='boolean')throw Error('Verification result required');
     return workflow.verify(args.id,args.passed,true);
    }
-   if(args.action==='start'){if(state.bugs.some(b=>['running','preparing'].includes(b.status)))throw Error('One bug is already running');return workflow.start(args.id);}
+   if(args.action==='start'){if(state.bugs.some(b=>['running','preparing'].includes(b.status)))throw Error('One bug is already running');if(state.bugs.find(b=>b.id===args.id)?.gone)throw Error('This bug left the current Feishu filter; refresh the list before starting it');return workflow.start(args.id);}
    if(args.action==='queue'){queue=args.enabled===true;await pump();return;}
    if(args.action==='retry')return workflow.retry(args.id,args.feedback,launch);
   if(args.action==='commit'){

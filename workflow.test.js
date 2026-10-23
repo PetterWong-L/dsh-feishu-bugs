@@ -28,3 +28,11 @@ test('passing verification hands the closed bug to the workspace cleanup hook',a
  state.bugs[0].status='awaiting-verification';
  await w.verify('1',true,true);assert.deepEqual(closed,['1']);assert.equal(state.bugs[0].workspaceId,undefined);
 });
+test('markGone flags survivors and clears when they return',async()=>{
+ const {markGone}=await import('./workflow.js');
+ const bugs=[{id:'a',status:'queued'},{id:'b',status:'verified'},{id:'c',status:'awaiting-verification'}];
+ markGone(bugs,['a'],()=>'T1');
+ assert.equal(bugs[0].gone,undefined);assert.equal(bugs[1].gone,'T1');assert.equal(bugs[2].gone,'T1');
+ markGone(bugs,['a','b'],()=>'T2');
+ assert.equal(bugs[1].gone,undefined);assert.equal(bugs[2].gone,'T1');
+});

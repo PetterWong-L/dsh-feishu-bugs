@@ -58,3 +58,13 @@ export function pruneUnstarted(bugs,keepIds) {
   const keep=new Set(keepIds);
   return bugs.filter(b=>keep.has(b.id)||!['queued','duplicate-review'].includes(b.status)||b.cwd||b.taskId);
 }
+// Items that survived pruning but left the current Feishu filter keep their work,
+// yet are flagged so the list can hide them until the user removes them.
+export function markGone(bugs,keepIds,now=()=>new Date().toISOString()) {
+  const keep=new Set(keepIds);
+  for(const b of bugs) {
+    if(keep.has(b.id)) delete b.gone;
+    else if(!b.gone) b.gone=now();
+  }
+  return bugs;
+}
