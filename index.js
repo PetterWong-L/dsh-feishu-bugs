@@ -87,6 +87,13 @@ export async function apply(ctx,config={}) {
  async function pump(){if(active||stopped||!queue)return;active=true;try{if(state.bugs.some(b=>['running','preparing'].includes(b.status)))return;const next=state.bugs.find(b=>b.status==='queued');if(next)await workflow.start(next.id);else queue=false;}catch{queue=false;}finally{active=false;}}
  async function reconcile(){
   const tasks=board.snapshot().tasks;
+  // The user may keep chatting in a bug's session after the first run settles. That starts a new
+  // execution on the same task, so follow it instead of leaving the row stuck on an old outcome.
+  for(const b of state.bugs){
+   if(!['failed','changes-requested','awaiting-verification'].includes(b.status))continue;
+   const task=tasks.find(t=>t.id===b.taskId);
+   if(task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt))){b.status='running';b.error=undefined;}
+  }
   for(const b of state.bugs.filter(x=>x.status==='running')){
    const task=tasks.find(t=>t.id===b.taskId),last=task?.executions?.at(-1);
    if(last?.endedAt){await workflow.outcome(b.taskId,last.result,last.summary?.text??last.error??'No execution summary; inspect task/session and diff before verification.');}

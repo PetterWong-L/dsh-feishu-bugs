@@ -68,7 +68,10 @@ export async function checkoutBranch(repo,branch){
 
 export async function commitAll(cwd,message){
   await excludePath(cwd,'.feishu-attachments/');
-  await git(cwd,['add','-A']);
+  // A worktree Pods entry is a symlink to the main repository, so the trailing-slash ignore
+  // rule does not match it; left alone `git add -A` would commit it and every later merge
+  // would replace the main repository's real Pods directory.
+  await git(cwd,['add','-A','--','.',':(exclude)Pods']);
   const staged=await git(cwd,['diff','--cached','--name-only']);
   if(!staged)throw Error('Nothing to commit in this worktree');
   await git(cwd,['commit','-m',message.slice(0,200)]);
@@ -93,7 +96,7 @@ export async function provisionWorktree(repo,cwd){
  if(await exists(pods)&&!await exists(join(cwd,'Pods'))){
   const [worktreeLock,installed]=await Promise.all([readFile(join(cwd,'Podfile.lock'),'utf8').catch(()=>null),readFile(join(pods,'Manifest.lock'),'utf8').catch(()=>null)]);
   if(worktreeLock&&installed&&worktreeLock===installed){
-   try{await symlink(pods,join(cwd,'Pods'),'dir');notes.push('linked Pods');}catch{notes.push('could not link Pods');}
+   try{await symlink(pods,join(cwd,'Pods'),'dir');await excludePath(cwd,'/Pods');notes.push('linked Pods');}catch{notes.push('could not link Pods');}
   }else notes.push('Pods not linked: Podfile.lock differs from the main repository');
  }
  return notes.length?{provision:notes.join('; ')}:{};

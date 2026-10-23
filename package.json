@@ -1,6 +1,6 @@
 {
   "name": "@local/feishu-bugs",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "private": false,
   "type": "module",
   "description": "Feishu Project bug workflow with isolated worktrees and human review gates.",
