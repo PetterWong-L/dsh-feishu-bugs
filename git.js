@@ -44,6 +44,22 @@ export async function prepareBranch(repo,runs,bug) {
   return {repo,cwd,branch,base,...await provisionWorktree(repo,cwd)};
 }
 
+// Work directly in the repository: create the fix branch from the current develop commit and
+// check it out, so the agent, Xcode and the user all work in one tree that already has Pods and
+// the generated workspace. Refuses to touch a dirty repository or an existing branch.
+export async function prepareBranchInRepo(repo,bug) {
+  if(!isAbsolute(repo))throw Error('Choose an absolute repository path');
+  repo=await realpath(repo);
+  if(await git(repo,['rev-parse','--show-toplevel'])!==repo)throw Error('Select repository root, not a subdirectory');
+  const dirty=(await git(repo,['status','--porcelain'])).trim();
+  if(dirty)throw Error('The repository has uncommitted changes; commit or stash them before starting a fix');
+  const base=await git(repo,['rev-parse','--verify','refs/heads/develop^{commit}']);
+  const branch=branchName(bug);
+  if(await git(repo,['branch','--list',branch]))throw Error('Bug branch already exists; inspect it before retrying');
+  await git(repo,['checkout','-b',branch,base]);
+  return {repo,cwd:repo,branch,base,inRepo:true};
+}
+
 export async function headCommit(cwd){return git(cwd,['rev-parse','HEAD']);}
 export async function changedPaths(cwd){const out=await git(cwd,['status','--porcelain']);return out?out.split('\n'):[];}
 export async function detachWorktree(cwd){const current=await git(cwd,['branch','--show-current']);if(current)await git(cwd,['checkout','--detach']);}
@@ -71,7 +87,10 @@ export async function commitAll(cwd,message){
   // A worktree Pods entry is a symlink to the main repository, so the trailing-slash ignore
   // rule does not match it; left alone `git add -A` would commit it and every later merge
   // would replace the main repository's real Pods directory.
-  await git(cwd,['add','-A','--','.',':(exclude)Pods']);
+  await git(cwd,['add','-A']);
+  // info/exclude already hides the worktree Pods symlink; this is the belt-and-braces pass for a
+  // repository whose ignore rules predate that, so the link can never reach the commit.
+  if(await git(cwd,['diff','--cached','--name-only','--','Pods']))await git(cwd,['rm','--cached','-q','--','Pods']);
   const staged=await git(cwd,['diff','--cached','--name-only']);
   if(!staged)throw Error('Nothing to commit in this worktree');
   await git(cwd,['commit','-m',message.slice(0,200)]);
