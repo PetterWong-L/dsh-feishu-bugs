@@ -36,3 +36,9 @@ test('markGone flags survivors and clears when they return',async()=>{
  markGone(bugs,['a','b'],()=>'T2');
  assert.equal(bugs[1].gone,undefined);assert.equal(bugs[2].gone,'T1');
 });
+test('cleanNote keeps a bounded plain-text note',async()=>{
+ const {cleanNote}=await import('./workflow.js');
+ assert.equal(cleanNote(undefined),'');
+ assert.equal(cleanNote('  先看埋点\u0007日志  '),'先看埋点日志');
+ assert.equal(cleanNote('x'.repeat(5000)).length,2000);
+});
