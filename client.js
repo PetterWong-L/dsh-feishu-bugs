@@ -104,7 +104,9 @@ window.__ModuleLoader__.load({id:'@local/feishu-bugs',factory(require){
    }
    const parseStatuses=value=>String(value??'').split(',').map(v=>v.trim()).filter(Boolean);
    const selectedStatuses=parseStatuses(selection.statuses);
-   const statusOptions=catalog.statusesFor?.typeKey===selection.typeKey?(catalog.statuses??[]):[];
+   // Prefer the statuses read for the selected type; fall back to whatever the server already knows so the
+   // chips never vanish just because the two sides briefly disagree on the type key.
+   const statusOptions=(catalog.statusesFor?.typeKey===selection.typeKey?catalog.statuses:null)??catalog.statuses??[];
    function toggleStatus(name){setSelection(s=>{const next=parseStatuses(s.statuses);const at=next.indexOf(name);at<0?next.push(name):next.splice(at,1);return {...s,statuses:next.join(',')};});}
    const syncAt=data?.sync?.at?new Date(data.sync.at):null;
    const models=data?.models??null,currentModel=data?.model??null;
@@ -153,8 +155,8 @@ window.__ModuleLoader__.load({id:'@local/feishu-bugs',factory(require){
       h('div',{className:'fb-repo'},button(t('readTypes'),()=>request({action:'types',projectKey:selection.projectKey}),false,false,!selection.projectKey)),
       h('div',{className:'fb-status'},h('span',{className:'fb-field-label'},t('statuses')),
       statusOptions.length?h('div',{className:'fb-chips'},statusOptions.map(o=>h('button',{type:'button',key:o.key,className:'fb-chip'+(selectedStatuses.includes(o.name)?' is-on':''),'aria-pressed':selectedStatuses.includes(o.name),disabled:busy||!authenticated,onClick:()=>toggleStatus(o.name)},o.name)))
-       :h('span',{className:'fb-muted'},!authenticated?t('statusHint'):statusOptions.length?'':t('statusEmpty')),
-      !statusOptions.length&&authenticated&&selection.typeKey&&h('button',{type:'button',className:'fb-chip',disabled:busy,onClick:()=>request({action:'statuses',projectKey:selection.projectKey,typeKey:selection.typeKey})},busy?t('statusPending'):t('readStatuses'))),
+       :h('span',{className:'fb-muted'},t('statusHint')),
+      !statusOptions.length&&selection.typeKey&&h('button',{type:'button',className:'fb-chip',disabled:busy,onClick:()=>request({action:'statuses',projectKey:selection.projectKey,typeKey:selection.typeKey})},busy?t('statusPending'):t('readStatuses'))),
        h('div',{className:'fb-repo'},field('repo',t('repo')),h('div',{className:'fb-actions'},button(t('pick'),async()=>{try{const path=await ctx.uiWorkspace.pickDirectory();if(path)setSelection(s=>({...s,repo:path}));}catch{setError(t('error'));}})))),
        models&&h('label',{className:'fb-field fb-repo'},t('model'),h('select',{value:modelValue,disabled:busy||!authenticated,onChange:changeModel},
         h('option',{value:''},defaultLabel?`${t('modelDefault')} · ${defaultLabel}`:t('modelDefault')),

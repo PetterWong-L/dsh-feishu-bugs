@@ -187,6 +187,9 @@ export async function apply(ctx,config={}) {
  }
  ctx.effect(()=>registerRoute(ctx,action,ownerSnapshot,subscribe));
  void refreshModels();
+ // Verify the keychain-backed login once on startup so a reloaded plugin settles on the real
+ // state instead of staying "unauthenticated" until the browser happens to open the panel.
+ void auth.check().catch(()=>{});
  ctx.effect(()=>ctx.tools.register({name:'feishu_bug_status',description:'Read imported Feishu bug workflow status. Human duplicate decisions, verification and starting fixes are available only in the owner browser panel. No credentials returned. Does not synchronize or start work.',parameters:{type:'object',properties:{},additionalProperties:false},output:{schema:{type:'object',additionalProperties:true},render:(_,v)=>[{type:'text',text:JSON.stringify(v)}]},execute:async()=>snapshot()}));
  ctx.effect(()=>()=>{stopped=true;queue=false;auth.dispose();});
 }
