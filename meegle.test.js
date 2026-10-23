@@ -50,3 +50,15 @@ test('no attachment fields means no download calls',async()=>{
  const r=await api.attachments('proj','1',dir);
  assert.deepEqual(r.files,[]);assert.equal(r.found,0);assert.equal(downloads,0);
 });
+test('status options come from the workflow status field and are deduplicated',async()=>{
+ const api=new MeegleAPI(async args=>args.includes('--help')?'--project-key string --work-item-type string':{list:[
+  {field_key:'work_item_status',field_name:'状态',field_type:'_work_item_status',option:[
+   {option_id:'OPEN',option_name:'BUG'},{option_id:'OPEN',option_name:'BUG'},{option_id:'RESOLVED',option_name:'APPROVED'},{option_id:'X',option_name:'下一轮 测试'},{option_id:'Y',option_name:"bad'quote"},{option_id:'',option_name:''}]},
+  {field_key:'owner',field_name:'创建者',field_type:'user'}]});
+ assert.deepEqual(await api.statuses('oog','issue'),[{key:'BUG',name:'BUG'},{key:'APPROVED',name:'APPROVED'},{key:'下一轮 测试',name:'下一轮 测试'}]);
+});
+test('status lookup fails closed when the type exposes no status options',async()=>{
+ const api=new MeegleAPI(async args=>args.includes('--help')?'--project-key string --work-item-type string':{list:[{field_key:'owner',field_name:'创建者',field_type:'user'}]});
+ await assert.rejects(api.statuses('oog','issue'),/no status options/);
+ await assert.rejects(api.statuses('oog',''),/Invalid project or type key/);
+});

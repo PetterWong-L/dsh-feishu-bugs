@@ -3,6 +3,7 @@ import {mkdir,stat,rm} from 'node:fs/promises';
 import {basename,join} from 'node:path';
 import {identifier,queryPage,decodeRow} from './mql.js';
 const key=s=>typeof s==='string'&&/^[\w-]{1,160}$/.test(s);
+const label=s=>typeof s==='string'&&s.trim().length>0&&s.length<=40&&!/[\u0000-\u001f\\'\"]/.test(s);
 const unwrap=v=>{if(v?.error||v?.err_code)throw Error('Meegle rejected this read; check account permissions');return v?.data??v;};
 const MAX_ITEMS=200;
 const IMAGE_TYPES={'image/png':'.png','image/jpeg':'.jpg','image/jpg':'.jpg','image/gif':'.gif','image/webp':'.webp','image/heic':'.heic'};
@@ -25,6 +26,15 @@ export class MeegleAPI{
   await this.flags(['workitem','meta-fields'],['--project-key','--work-item-type']);
   const list=rows(await this.run(['workitem','meta-fields','--project-key',projectKey,'--work-item-type',typeKey]),'list');
   return list.map(f=>{if(!key(f.field_key)||typeof f.field_name!=='string'||typeof f.field_type!=='string')throw Error('Unsupported field metadata; no bugs imported');return {field_key:f.field_key,field_name:f.field_name,field_type:f.field_type};});
+ }
+ async statuses(projectKey,typeKey){
+  if(!key(projectKey)||!key(typeKey))throw Error('Invalid project or type key');
+  const list=rows(await this.run(['workitem','meta-fields','--project-key',projectKey,'--work-item-type',typeKey]),'list');
+  const field=list.find(f=>f&&f.field_key==='work_item_status');
+  const options=Array.isArray(field?.option)?field.option:[];
+  const names=[...new Set(options.map(o=>o&&o.option_name).filter(n=>label(n)))].slice(0,30);
+  if(!names.length)throw Error('This work item type exposes no status options');
+  return names.map(n=>({key:n,name:n}));
  }
  async bugs(s){
   if(!key(s.projectKey)||!key(s.typeKey)||!key(s.simpleName))throw Error('Select a project and defect type with a valid simple name first');

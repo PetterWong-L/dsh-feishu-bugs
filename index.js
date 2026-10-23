@@ -102,7 +102,12 @@ export async function apply(ctx,config={}) {
    }
    if(args.action==='types'){
     if(!catalog.projects.some(p=>p.key===args.projectKey))throw Error('Select an accessible project from metadata first');
-    const types=await api.types(args.projectKey);catalog.types=types;catalog.projectKey=args.projectKey;await save();return;
+    const types=await api.types(args.projectKey);catalog.types=types;catalog.projectKey=args.projectKey;catalog.statuses=[];catalog.statusesFor=null;await save();return;
+   }
+   if(args.action==='statuses'){
+    if(!catalog.projects.some(p=>p.key===args.projectKey)||catalog.projectKey!==args.projectKey)throw Error('Read project and type metadata first');
+    if(!catalog.types.some(t=>t.key===args.typeKey))throw Error('Read the work item types before loading statuses');
+    catalog.statuses=await api.statuses(args.projectKey,args.typeKey);catalog.statusesFor={projectKey:args.projectKey,typeKey:args.typeKey};await save();return;
    }
    if(args.action==='sync'){
     if(!args.selection||typeof args.selection.repo!=='string'||!args.selection.repo.startsWith('/'))throw Error('Choose a local repository first');
