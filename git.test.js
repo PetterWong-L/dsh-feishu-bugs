@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,writeFile} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFileSync} from 'node:child_process';import {prepareBranch,validateWorktree,detachWorktree,checkoutBranch,changedPaths,headCommit} from './git.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,writeFile,mkdir,readFile,realpath,stat} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFileSync} from 'node:child_process';import {prepareBranch,validateWorktree,detachWorktree,checkoutBranch,changedPaths,headCommit} from './git.js';
 test('separate worktree leaves develop and working directory unchanged',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-test-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{execFileSync('git',['init','-b','develop',repo]);git('config','user.email','test@example.test');git('config','user.name','Test');await writeFile(join(repo,'a'),'a');git('add','.');git('commit','-m','init');const base=git('rev-parse','develop');const a=await prepareBranch(repo,join(root,'runs'),{id:'project:bug:123',remoteId:123,title:'Crash on start'});assert.match(a.branch,/^fix\/feishu-123($|-)/);assert.equal(git('branch','--show-current'),'develop');assert.equal(git('rev-parse','develop'),base);assert.equal(execFileSync('git',['branch','--show-current'],{cwd:a.cwd,encoding:'utf8'}).trim(),a.branch);await assert.rejects(prepareBranch(repo,join(root,'runs'),{id:'project:bug:123',remoteId:123,title:'Crash on start'}),/exists/);await validateWorktree(a);execFileSync('git',['checkout','-b','wrong-branch'],{cwd:a.cwd,stdio:'ignore'});await assert.rejects(validateWorktree(a),/branch changed/);}finally{await rm(root,{recursive:true,force:true});}});
 
 test('acceptance moves the fix branch into the main repo without losing the worktree',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-accept-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{
@@ -27,4 +27,23 @@ test('changedPaths reports worktree edits the branch does not carry',async()=>{c
  assert.deepEqual(await changedPaths(run.cwd),[]);
  await writeFile(join(run.cwd,'b.txt'),'b');
  assert.equal((await changedPaths(run.cwd)).length,1);
+}finally{await rm(root,{recursive:true,force:true});}});
+
+test('worktree is provisioned with the generated workspace and a Pods link',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-provision-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{
+ execFileSync('git',['init','-b','develop',repo]);git('config','user.email','t@e.test');git('config','user.name','T');
+ await writeFile(join(repo,'a'),'a');await writeFile(join(repo,'Podfile.lock'),'LOCK');
+ await mkdir(join(repo,'Pods'),{recursive:true});await writeFile(join(repo,'Pods','Manifest.lock'),'LOCK');
+ await mkdir(join(repo,'Demo.xcworkspace','xcshareddata'),{recursive:true});await writeFile(join(repo,'Demo.xcworkspace','contents.xcworkspacedata'),'<Workspace/>');
+ await writeFile(join(repo,'.gitignore'),'Pods/\nxcuserdata/\n');
+ await mkdir(join(repo,'Demo.xcworkspace','xcuserdata'),{recursive:true});await writeFile(join(repo,'Demo.xcworkspace','xcuserdata','me.xcuserdatad'),'skip');
+ git('add','.');git('commit','-m','init');
+ const run=await prepareBranch(repo,join(root,'runs'),{id:'p:bug:9',remoteId:9,title:'Build'});
+ assert.match(run.provision,/linked Pods/);
+ assert.equal(await realpath(join(run.cwd,'Pods')),await realpath(join(repo,'Pods')));
+ assert.equal(await readFile(join(run.cwd,'Demo.xcworkspace','contents.xcworkspacedata'),'utf8'),'<Workspace/>');
+ await assert.rejects(stat(join(run.cwd,'Demo.xcworkspace','xcuserdata')));
+ await writeFile(join(repo,'Pods','Manifest.lock'),'DIFFERENT');
+ const second=await prepareBranch(repo,join(root,'runs'),{id:'p:bug:10',remoteId:10,title:'Build'});
+ assert.match(second.provision,/differs/);
+ await assert.rejects(stat(join(second.cwd,'Pods')));
 }finally{await rm(root,{recursive:true,force:true});}});

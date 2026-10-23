@@ -2,6 +2,13 @@
 
 采用 `主版本.次版本.补丁`。破坏性兼容变更升次版本，并在此标注受影响的 DSH / Meegle CLI 范围。
 
+## 1.8.0
+
+- 新建 worktree 时自动预置被 gitignore 的构建前置：复制 `*.xcworkspace`（体积小、路径相对，指向 worktree 自身的工程），并在 `Podfile.lock` 与主仓 `Pods/Manifest.lock` 完全一致时用符号链接接上 `Pods`，避免每个任务重复拷贝几百 MB。
+- 锁文件不一致时不链接 Pods，并把原因写进提示词，让 agent 显式说明构建前置缺失，而不是悄悄构建主仓。
+- 修复提示词补充：worktree 已预置构建前置，必须在 worktree 内构建；若构建日志解析到的源码路径不在该 worktree 下，应停止并报告。
+- 已用真实仓库验证：在临时 worktree 里注入 `#error` 后构建失败并指向 worktree 内该文件；移除后 `BUILD SUCCEEDED`，证明构建读取的是 worktree 源码。
+
 ## 1.7.1
 
 - 修复插件重载后授权状态停在「未授权」导致状态筛选按钮不显示：Host 启动时自行校验一次钥匙串登录状态，不再只靠浏览器触发检查。

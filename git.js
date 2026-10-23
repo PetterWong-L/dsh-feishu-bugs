@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { realpath,mkdir,readFile,appendFile } from 'node:fs/promises';
+import { realpath,mkdir,readFile,appendFile,copyFile,symlink,stat,readdir } from 'node:fs/promises';
 import { isAbsolute,join } from 'node:path';
 import { createHash } from 'node:crypto';
 const exec=promisify(execFile);
@@ -41,7 +41,7 @@ export async function prepareBranch(repo,runs,bug) {
   const exists=await git(repo,['branch','--list',branch]);if(exists)throw Error('Bug branch already exists; inspect it before retrying');
   await mkdir(runs,{recursive:true,mode:0o700});
   await git(repo,['worktree','add','-b',branch,cwd,base]);
-  return {repo,cwd,branch,base};
+  return {repo,cwd,branch,base,...await provisionWorktree(repo,cwd)};
 }
 
 export async function headCommit(cwd){return git(cwd,['rev-parse','HEAD']);}
@@ -73,4 +73,38 @@ export async function commitAll(cwd,message){
   if(!staged)throw Error('Nothing to commit in this worktree');
   await git(cwd,['commit','-m',message.slice(0,200)]);
   return git(cwd,['rev-parse','HEAD']);
+}
+
+async function exists(path){try{await stat(path);return true;}catch{return false;}}
+
+// A worktree only carries tracked files, so CocoaPods output and the generated workspace are
+// missing and every agent would otherwise re-copy 400+ MB of Pods (or build the wrong tree).
+// Seed the worktree once: copy the small .xcworkspace, and symlink Pods only when the lock
+// files agree, so a build inside the worktree compiles the worktree's own sources.
+export async function provisionWorktree(repo,cwd){
+ const notes=[];
+ for(const entry of await readdir(repo,{withFileTypes:true}).catch(()=>[])){
+  if(!entry.isDirectory()||!entry.name.endsWith('.xcworkspace'))continue;
+  const target=join(cwd,entry.name);
+  if(await exists(target))continue;
+  try{await copyWorkspace(join(repo,entry.name),target);notes.push(`copied ${entry.name}`);}catch{notes.push(`could not copy ${entry.name}`);}
+ }
+ const pods=join(repo,'Pods');
+ if(await exists(pods)&&!await exists(join(cwd,'Pods'))){
+  const [worktreeLock,installed]=await Promise.all([readFile(join(cwd,'Podfile.lock'),'utf8').catch(()=>null),readFile(join(pods,'Manifest.lock'),'utf8').catch(()=>null)]);
+  if(worktreeLock&&installed&&worktreeLock===installed){
+   try{await symlink(pods,join(cwd,'Pods'),'dir');notes.push('linked Pods');}catch{notes.push('could not link Pods');}
+  }else notes.push('Pods not linked: Podfile.lock differs from the main repository');
+ }
+ return notes.length?{provision:notes.join('; ')}:{};
+}
+
+async function copyWorkspace(from,to){
+ await mkdir(to,{recursive:true});
+ for(const entry of await readdir(from,{withFileTypes:true})){
+  if(entry.name==='xcuserdata')continue;
+  const src=join(from,entry.name),dst=join(to,entry.name);
+  if(entry.isDirectory())await copyWorkspace(src,dst);
+  else if(entry.isFile())await copyFile(src,dst);
+ }
 }
