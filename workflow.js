@@ -49,7 +49,7 @@ export class Workflow {
     b.status='preparing';b.error=undefined;await this.record('retry-start',b);
     try{
      if(restart){Object.assign(b,await this.deps.prepare(b));await this.deps.save();}
-     Object.assign(b,await launch(b,note));b.status='running';await this.record('retry-launched',b);
+     Object.assign(b,await launch(b,note,restart?'restart':undefined));b.status='running';await this.record('retry-launched',b);
     }catch(e){b.status='failed';b.error=String(e.message);await this.record('retry-failed',b);throw e;}
     return b;
   }); }

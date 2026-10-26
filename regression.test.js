@@ -20,3 +20,13 @@ test('fix prompt prefers a connected Xcode MCP over xcrun builds', async () => {
   assert.match(source, /Only when no Xcode MCP tool is connected/);
   assert.match(source, /Never pass '-sdk iphonesimulator'/, 'forcing an SDK breaks the macro plugin');
 });
+
+test('restarting a failed run offers the same optional note as starting one', async () => {
+  const source = await readFile(new URL('./client.js', import.meta.url), 'utf8');
+  assert.match(source, /noteEditor\(b,'restart'\)/);
+  assert.match(source, /noteEditor\(b,'start'\)/);
+  assert.match(source, /restartGo:'重新开始'/);
+  assert.match(source, /restartGo:'Restart now'/);
+  const host = await readFile(new URL('./workflow.js', import.meta.url), 'utf8');
+  assert.match(host, /launch\(b,note,restart\?'restart':undefined\)/);
+});
