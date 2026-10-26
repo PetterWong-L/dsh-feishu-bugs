@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,writeFile,mkdir,readFile,realpath,stat} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFileSync} from 'node:child_process';import {prepareBranch,prepareBranchInRepo,validateWorktree,detachWorktree,checkoutBranch,changedPaths,headCommit,commitAll} from './git.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,writeFile,mkdir,readFile,realpath,stat,lstat} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFileSync} from 'node:child_process';import {prepareBranch,prepareBranchInRepo,prepareFix,validateWorktree,detachWorktree,checkoutBranch,changedPaths,headCommit,commitAll} from './git.js';
 test('in-repo fix branch refuses a dirty tree, then commits only the fix',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-inrepo-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{
  execFileSync('git',['init','-b','develop',repo]);git('config','user.email','t@e.test');git('config','user.name','T');
  await writeFile(join(repo,'a'),'a');await mkdir(join(repo,'Pods'),{recursive:true});await writeFile(join(repo,'Pods','keep'),'x');
@@ -14,6 +14,28 @@ test('in-repo fix branch refuses a dirty tree, then commits only the fix',async(
  const head=await commitAll(repo,'fix: thing');
  assert.equal(head,git('rev-parse','HEAD'));
  assert.equal(git('show','--stat','--name-only','HEAD').includes('fix.txt'),true);
+}finally{await rm(root,{recursive:true,force:true});}});
+
+test('an unclean repository keeps your work and isolates the fix in a worktree',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-auto-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{
+ execFileSync('git',['init','-b','develop',repo]);git('config','user.email','t@e.test');git('config','user.name','T');
+ await writeFile(join(repo,'a'),'a');await writeFile(join(repo,'.gitignore'),'Pods/\n');
+ await mkdir(join(repo,'SevMinWorkout.xcworkspace'),{recursive:true});await writeFile(join(repo,'SevMinWorkout.xcworkspace','contents.xcworkspacedata'),'<Workspace/>');
+ await mkdir(join(repo,'Pods'),{recursive:true});await writeFile(join(repo,'Podfile.lock'),'LOCK');await writeFile(join(repo,'Pods','Manifest.lock'),'LOCK');
+ git('add','.');git('commit','-m','init');
+ await writeFile(join(repo,'wip.txt'),'my work in progress');
+ const runs=join(root,'runs');
+ const run=await prepareFix(repo,runs,{id:'p:bug:9',remoteId:9,title:'QA crash'});
+ assert.equal(run.inRepo,false);assert.equal(run.isolated,true);assert.notEqual(run.cwd,await realpath(repo));
+ assert.equal(git('status','--porcelain'),'?? wip.txt');assert.equal(git('branch','--show-current'),'develop');
+ assert.equal((await readFile(join(run.cwd,'wip.txt'),'utf8').catch(()=>null)),null);
+ assert.equal((await readFile(join(run.cwd,'SevMinWorkout.xcworkspace','contents.xcworkspacedata'),'utf8')),'<Workspace/>');
+ assert.equal((await lstat(join(run.cwd,'Pods'))).isSymbolicLink(),true);
+ assert.equal(execFileSync('git',['branch','--show-current'],{cwd:run.cwd,encoding:'utf8'}).trim(),run.branch);
+ await writeFile(join(repo,'wip.txt'),'my work in progress, edited');
+ assert.equal(await readFile(join(repo,'wip.txt'),'utf8'),'my work in progress, edited');
+ const clean=join(root,'clean');execFileSync('git',['clone','-q',repo,clean]);execFileSync('git',['checkout','-q','develop'],{cwd:clean});
+ const inRepo=await prepareFix(clean,join(root,'runs2'),{id:'p:bug:10',remoteId:10,title:'QA crash two'});
+ assert.equal(inRepo.inRepo,true);assert.equal(inRepo.cwd,await realpath(clean));
 }finally{await rm(root,{recursive:true,force:true});}});
 
 test('separate worktree leaves develop and working directory unchanged',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-test-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{execFileSync('git',['init','-b','develop',repo]);git('config','user.email','test@example.test');git('config','user.name','Test');await writeFile(join(repo,'a'),'a');git('add','.');git('commit','-m','init');const base=git('rev-parse','develop');const a=await prepareBranch(repo,join(root,'runs'),{id:'project:bug:123',remoteId:123,title:'Crash on start'});assert.match(a.branch,/^fix\/feishu-123($|-)/);assert.equal(git('branch','--show-current'),'develop');assert.equal(git('rev-parse','develop'),base);assert.equal(execFileSync('git',['branch','--show-current'],{cwd:a.cwd,encoding:'utf8'}).trim(),a.branch);await assert.rejects(prepareBranch(repo,join(root,'runs'),{id:'project:bug:123',remoteId:123,title:'Crash on start'}),/exists/);await validateWorktree(a);execFileSync('git',['checkout','-b','wrong-branch'],{cwd:a.cwd,stdio:'ignore'});await assert.rejects(validateWorktree(a),/branch changed/);}finally{await rm(root,{recursive:true,force:true});}});

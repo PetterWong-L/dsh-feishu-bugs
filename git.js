@@ -60,6 +60,18 @@ export async function prepareBranchInRepo(repo,bug) {
   return {repo,cwd:repo,branch,base,inRepo:true};
 }
 
+// Pick the isolation that matches the current state of the repository: a clean tree gets the fix
+// branch checked out in place, while a tree with your own uncommitted work stays untouched and the
+// fix runs in an isolated worktree that shares the repository's objects, workspace and Pods.
+export async function prepareFix(repo,runs,bug) {
+  if(!isAbsolute(repo))throw Error('Choose an absolute repository path');
+  const root=await realpath(repo);
+  if(await git(root,['rev-parse','--show-toplevel'])!==root)throw Error('Select repository root, not a subdirectory');
+  const dirty=(await git(root,['status','--porcelain'])).trim();
+  if(!dirty)return prepareBranchInRepo(root,bug);
+  return {...await prepareBranch(root,runs,bug),inRepo:false,isolated:true};
+}
+
 export async function headCommit(cwd){return git(cwd,['rev-parse','HEAD']);}
 export async function changedPaths(cwd){const out=await git(cwd,['status','--porcelain']);return out?out.split('\n'):[];}
 export async function detachWorktree(cwd){const current=await git(cwd,['branch','--show-current']);if(current)await git(cwd,['checkout','--detach']);}
