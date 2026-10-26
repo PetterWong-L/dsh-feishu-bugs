@@ -40,15 +40,23 @@ export class Workflow {
   }); }
   retry(id,feedback,launch) { return this.locked(async()=>{
     if(this.state.bugs.some(b=>['preparing','running'].includes(b.status)))throw Error('One bug is already running');
-    const b=this.bug(id);if(!['changes-requested','failed'].includes(b.status)||!b.cwd||!b.branch)throw Error('Retry requires existing worktree and failed/rejected result');
-    if(typeof feedback!=='string'||!feedback.trim())throw Error('Verification feedback required');
-    b.status='preparing';await this.record('retry-start',b);
-    try{Object.assign(b,await launch(b,feedback.slice(0,4000)));b.status='running';await this.record('retry-launched',b);}catch(e){b.status='failed';b.error=String(e.message);await this.record('retry-failed',b);throw e;}
+    const b=this.bug(id);if(!['changes-requested','failed'].includes(b.status))throw Error('Retry requires a failed or rejected result');
+    const note=typeof feedback==='string'?feedback.trim().slice(0,4000):'';
+    // A run that died before the branch existed (dirty repository, missing develop, killed process)
+    // has nothing to continue in, so retrying rebuilds the branch from the current develop.
+    const restart=!b.cwd||!b.branch;
+    if(!restart&&!note)throw Error('Verification feedback required');
+    b.status='preparing';b.error=undefined;await this.record('retry-start',b);
+    try{
+     if(restart){Object.assign(b,await this.deps.prepare(b));await this.deps.save();}
+     Object.assign(b,await launch(b,note));b.status='running';await this.record('retry-launched',b);
+    }catch(e){b.status='failed';b.error=String(e.message);await this.record('retry-failed',b);throw e;}
     return b;
   }); }
   outcome(taskId,result,summary) { return this.locked(async()=>{
     const b=this.state.bugs.find(b=>b.taskId===taskId&&b.status==='running');if(!b)return;
     b.status=result==='succeeded'?'awaiting-verification':'failed';b.summary=summary;
+    if(result!=='succeeded')b.error=String(summary||'').slice(0,400)||'The execution failed without a summary; open the execution task for details.';
     if(this.deps.inspect){try{Object.assign(b,await this.deps.inspect(b));}catch{}}
     await this.record(result,b);return b;
   }); }

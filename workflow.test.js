@@ -42,3 +42,19 @@ test('cleanNote keeps a bounded plain-text note',async()=>{
  assert.equal(cleanNote('  先看埋点\u0007日志  '),'先看埋点日志');
  assert.equal(cleanNote('x'.repeat(5000)).length,2000);
 });
+test('a run that failed before its branch existed can restart without feedback',async()=>{
+ const calls=[];const state={bugs:[{id:'1',status:'failed',repo:'/repo',error:'The repository has uncommitted changes'}],audit:[]};
+ let launched=0;
+ const w=new Workflow(state,{save:async()=>{},prepare:async b=>{calls.push('prepare');return {branch:'fix/feishu-1',cwd:'/tmp/isolated'};},launch:async(b,note)=>{launched++;calls.push('launch:'+note);return {taskId:'task-9'};}});
+ const b=await w.retry('1','',async(b,note)=>{launched++;calls.push('launch:'+note);return {taskId:'task-9'};});
+ assert.equal(b.status,'running');assert.equal(b.taskId,'task-9');assert.equal(b.error,undefined);
+ assert.deepEqual(calls,['prepare','launch:']);
+});
+test('a failed execution surfaces its reason on the card',async()=>{
+ const state={bugs:[],audit:[]};
+ const w=new Workflow(state,{save:async()=>{},prepare:async b=>({branch:'fix/x',cwd:'/tmp/wt'}),launch:async()=>({taskId:'t1'})});
+ await w.sync([{id:'1',title:'crash'}]);await w.start('1');
+ await w.outcome('t1','failed','xcodebuild: error: no scheme named SevMinWorkout');
+ assert.equal(state.bugs[0].status,'failed');
+ assert.match(state.bugs[0].error,/no scheme named SevMinWorkout/);
+});
