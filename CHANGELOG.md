@@ -2,6 +2,13 @@
 
 采用 `主版本.次版本.补丁`。破坏性兼容变更升次版本，并在此标注受影响的 DSH / Meegle CLI 范围。
 
+## 1.12.0
+
+- 新增「编译验证」：在缺陷所在目录直接跑 `xcodebuild` 模拟器构建，使用独立 DerivedData，结果/耗时/`.app` 路径与失败日志回填到卡片；同时只允许一个构建。
+- 新增「在 Xcode 打开」：打开该分支目录里的 `.xcworkspace`，验证不再需要先合并 develop。
+- 提示词明确禁止 `-sdk iphonesimulator`：宏插件 `OOGMacros` 会因此以模拟器程序启动并报 `DYLD_ROOT_PATH not set for simulator program`。
+- 新增 `build.js`（workspace/scheme 发现、构建执行、产物定位）与 5 项测试。
+
 ## 1.11.0
 
 - 自动选择隔离方式：仓库工作树干净时在原仓库拉分支；有未提交改动时改为隔离 worktree，主仓保持原分支与改动，可以一边手动改 develop、一边让面板修 QA 缺陷。

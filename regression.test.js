@@ -15,7 +15,8 @@ test('retry feedback uses inline UI, never window.prompt (unsupported in Electro
 test('fix prompt prefers a connected Xcode MCP over xcrun builds', async () => {
   const source = await readFile(new URL('./index.js', import.meta.url), 'utf8');
   const mcp = source.indexOf('mcp__xcode__');
-  const cli = source.indexOf('xcrun xcodebuild');
+  const cli = source.indexOf('xcodebuild -workspace');
   assert.ok(mcp > 0 && cli > mcp, 'MCP guidance must come before the CLI fallback');
   assert.match(source, /Only when no Xcode MCP tool is connected/);
+  assert.match(source, /Never pass '-sdk iphonesimulator'/, 'forcing an SDK breaks the macro plugin');
 });
