@@ -69,6 +69,8 @@ npm install --omit=dev
 
 数据默认写入 `~/.dsh/feishu-bugs-data`；如需自定义，在 bundle 配置里设置绝对路径 `storageDir`。
 
+**本机安装位置（2026-10-27 迁移）**：插件源码在 `/Users/wanglichao/飞书缺陷工作流/feishu-bugs`，运行时数据在 `/Users/wanglichao/飞书缺陷工作流/feishu-bugs-data`。DSH profile（`~/.dsh/profiles/desktop`）用 `link:` 指向源码目录，并在 `cordis.patch.yml` 里用 `storageDir` 显式钉住数据目录——数据已不在 `~/.dsh/` 或 `~/dsh/` 的默认位置，省略 `storageDir` 会新建空队列。挪动目录后要重启 DSH；旧 worktree 记录的位置已随数据目录改写，但它们与主仓 `oog101-ios-swift` 的 git 绑定仍是旧路径（这些记录已验收归档，需要重新构建时用「补齐构建前置」）。
+
 升级：拉取新版本后重启 DSH。执行状态、分支与选择都会持久化，重启不会重放分支创建。0.x 版本把数据放在 `~/dsh/feishu-bugs-data`，1.0 会一次性接管该目录，不会显示成空队列。1.10 起新缺陷改为在仓库内拉分支，不再创建 worktree；旧记录仍可验收，需要时用面板上的「补齐构建前置」。1.11 起主仓有未提交改动时自动改为隔离 worktree；1.12 起可在面板内直接编译验证或用 Xcode 打开该分支目录，失败可直接重新开始。1.13 起任务面板改为可选依赖，任务面板被关闭或卸载时缺陷面板不再整块消失。1.13.10 起验证通过会自动删除该缺陷的隔离 worktree 与构建产物（分支保留），并用一次启动清理回收历史遗留的已验证目录。
 
 卸载：在插件管理里禁用/移除该 bundle；数据目录不会自动删除。
@@ -123,6 +125,26 @@ node --check index.js
 | `build.js` | 面板内构建：workspace/scheme 发现、`xcodebuild` 执行、产物与日志 |
 | `workflow.js` / `store.js` | 人工门禁状态机（含失败重试/重新开始）与持久化 |
 | `http.js` | owner 鉴权路由 |
+
+### 改完不用重启 DSH
+
+DSH 只在启动时求值插件的 ESM 模块并缓存，所以默认情况下改代码必须重启才生效。开启 HMR 后可以省掉这一步：
+
+```yaml
+# ~/.dsh/profiles/desktop/cordis.patch.yml
+- id: hmr
+  config:
+    root:
+      - "/Users/wanglichao/飞书缺陷工作流/feishu-bugs"
+```
+
+`@deepseek-ai/dsh-hmr` 会监听该目录（`node_modules` 默认排除），文件变动后重建插件实例：`ctx.set/ctx.tool/事件` 重新注册，进行中的任务不受影响。改完执行：
+
+```sh
+npm run reload     # touch index.js / client.js，触发 watcher
+```
+
+生效范围：宿主侧（工具、动作、工作流、清理逻辑）立即生效；`client.js` 的面板 UI 需要刷新一次页面（⌘R）；`cordis.patch.yml` 里的 `config` 改动、以及 `package.json` 的依赖变更仍需重启。副作用是插件实例重建、内存态丢失（本插件状态都在 `storageDir`，无影响）。
 
 ## 版本记录
 
