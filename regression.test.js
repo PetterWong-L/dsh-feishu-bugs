@@ -43,11 +43,14 @@ test('an in-repo row still offers verification buttons', async () => {
   assert.match(line, /action:'verify',id:b\.id,passed:false/, 'reject must render for in-repo rows');
 });
 
-test('verification and duplicate decisions never need the task board plugin', async () => {
+test('repairs start through the session domain, never the task board', async () => {
   const source = await readFile(new URL('./index.js', import.meta.url), 'utf8');
-  const verify = source.slice(source.indexOf("if(args.action==='verify')"), source.indexOf("if(['start','retry','queue']"));
-  assert.ok(verify.length > 0);
-  assert.ok(!verify.includes('requireBoard'), 'verify must not require the board');
-  assert.match(source, /if\(\['start','retry','queue'\]\.includes\(args\.action\)\)requireBoard\(\);/);
+  assert.match(source, /if\(\['start','retry','queue'\]\.includes\(args\.action\)\)sessions\.ctrl\(\);/);
+  assert.ok(!source.includes("kind:'create'"), 'no task-board task is created for a repair');
+  assert.ok(!source.includes('board.apply'), 'the panel never writes to the task board');
+  assert.ok(!source.includes('requireBoard'), 'the board is not a gate for any action');
   assert.match(source, /export const inject=\['webServer','connection','tools'\];/, 'board is not an injected dependency');
+  const client = await readFile(new URL('./client.js', import.meta.url), 'utf8');
+  assert.ok(!client.includes("data?.taskBoard!==false"), 'panel actions must not be gated on the board');
+  assert.ok(!client.includes("selectPanel('task-board')"), 'no task-board panel is opened');
 });

@@ -53,9 +53,11 @@ export class Workflow {
     }catch(e){b.status='failed';b.error=String(e.message);await this.record('retry-failed',b);throw e;}
     return b;
   }); }
-  outcome(taskId,result,summary) { return this.locked(async()=>{
-    const b=this.state.bugs.find(b=>b.taskId===taskId&&b.status==='running');if(!b)return;
+  outcome(key,result,summary) { return this.locked(async()=>{
+    // Rows started before this release point at a task-board task; newer ones point at a session.
+    const b=this.state.bugs.find(b=>(b.sessionId===key||b.taskId===key)&&b.status==='running');if(!b)return;
     b.status=result==='succeeded'?'awaiting-verification':'failed';b.summary=summary;
+    b.settledAt=new Date().toISOString();
     if(result!=='succeeded')b.error=String(summary||'').slice(0,400)||'The execution failed without a summary; open the execution task for details.';
     if(this.deps.inspect){try{Object.assign(b,await this.deps.inspect(b));}catch{}}
     await this.record(result,b);return b;

@@ -9,26 +9,32 @@ test('owner cancel bypasses stalled auth-start and never restarts login afterwar
  try{await apply(ctx,{storageDir:dir});const start=post('auth-start');await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof release,'function');const cancelled=await Promise.race([post('auth-cancel'),new Promise(resolve=>setTimeout(()=>resolve('timeout'),250))]);assert.equal(cancelled,200);release(false);await start;assert.equal(begins,0);}
  finally{release?.(false);disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
-test('restart reconciles accepted running tasks instead of allowing duplicate retry',async()=>{
+test('a live session keeps its row running and blocks a second start',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'feishu-host-test-'));const disposers=[];const routes=new Map();let tool;
- const board={snapshot:()=>({tasks:[{id:'task1',status:'running',executions:[{id:'e1',startedAt:1}]}]}),subscribe:()=>()=>{}};
+ const sessions={create:async()=>({sessionId:'s2'}),prompt:async()=>({accepted:true}),list:async()=>({items:[{sessionId:'s1',running:true}]}),inspect:async()=>({events:[]})};
  try{
-  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'preparing',taskId:'task1',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
-  const ctx={get:()=>board,workspaceRegistry:{},connection:{},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
-  await apply(ctx,{storageDir:dir});const s=await tool.execute();assert.equal(s.bugs[0].status,'running');assert.equal(s.configured,false);assert.equal(s.credentials,undefined);assert.equal(JSON.parse(await readFile(join(dir,'state.json'),'utf8')).bugs[0].status,'running');assert.ok(routes.has('/feishu-bugs/api'));
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'running',sessionId:'s1',cwd:'/unused',branch:'fix/bug',repo:'/unused'},{id:'p:bug:2',title:'Other',status:'queued',repo:'/unused'}],audit:[]}));
+  const ctx={get:n=>n==='sessionController'?sessions:undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  const s=await tool.execute();
+  assert.equal(s.bugs[0].status,'running');assert.equal(s.sessions,true);assert.equal(s.sessionMissing,null);assert.equal(s.credentials,undefined);
+  let body='';const req=Readable.from([Buffer.from(JSON.stringify({action:'start',id:'p:bug:2'}))]);req.method='POST';req.headers={'content-type':'application/json','x-dsh-feishu-bugs':'1'};
+  await routes.get('/feishu-bugs/api')(req,{writeHead:()=>{},end:chunk=>{body+=chunk??'';}});
+  assert.match(body,/already running/);
+  assert.equal(JSON.parse(await readFile(join(dir,'state.json'),'utf8')).bugs[1].status,'queued');
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
-test('panel still serves listings when the task board plugin is absent',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'feishu-noboard-test-'));const disposers=[];const routes=new Map();let tool;
+test('the panel still serves listings when no repair session can be started',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-nosession-test-'));const disposers=[];const routes=new Map();let tool;
  try{
   await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'queued',repo:'/unused'}],audit:[]}));
   const ctx={get:()=>undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
   await apply(ctx,{storageDir:dir});
   const s=await tool.execute();
-  assert.equal(s.taskBoard,false);assert.equal(s.boardMissing.includes('task board plugin is not enabled'),true);assert.equal(s.bugs.length,1);
-  const req=Readable.from([Buffer.from(JSON.stringify({action:'start',id:'p:bug:1'}))]);req.method='POST';req.headers={'content-type':'application/json','x-dsh-feishu-bugs':'1'};
-  let body='';await routes.get('/feishu-bugs/api')(req,{writeHead:()=>{},end:chunk=>{body+=chunk??'';}});
-  assert.match(body,/task board plugin is not enabled/);
+  assert.equal(s.sessions,false);assert.match(s.sessionMissing,/session service is unavailable/);assert.equal(s.bugs.length,1);
+  let body='';const req=Readable.from([Buffer.from(JSON.stringify({action:'start',id:'p:bug:1'}))]);req.method='POST';req.headers={'content-type':'application/json','x-dsh-feishu-bugs':'1'};
+  await routes.get('/feishu-bugs/api')(req,{writeHead:()=>{},end:chunk=>{body+=chunk??'';}});
+  assert.match(body,/session service is unavailable/);
   assert.equal(JSON.parse(await readFile(join(dir,'state.json'),'utf8')).bugs[0].status,'queued');
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
@@ -66,14 +72,15 @@ test('the repair-model catalog survives a late session controller registration',
 });
 test('a run that settled while no event arrived stops reporting as running',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'feishu-settle-test-'));const disposers=[];let tool;
- let tasks=[{id:'task1',status:'running',executions:[{id:'e1',startedAt:1}]}];
- const board={snapshot:()=>({tasks}),subscribe:()=>()=>{}};
+ let items=[{sessionId:'s1',running:true}];
+ const events=[{type:'turn/start',seq:1,data:{turn:1}},{type:'assistant/message',seq:2,data:{message:{role:'assistant',content:[{type:'text',text:'fixed'}]}}},{type:'turn/end',seq:3,data:{reason:{kind:'completed'}}}];
+ const sessions={create:async()=>({sessionId:'s1'}),prompt:async()=>({accepted:true}),list:async()=>({items}),inspect:async()=>({events})};
  try{
-  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'running',taskId:'task1',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
-  const ctx={get:()=>board,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:()=>()=>{}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'running',sessionId:'s1',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
+  const ctx={get:n=>n==='sessionController'?sessions:undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:()=>()=>{}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
   await apply(ctx,{storageDir:dir});
-  // The execution ends, but the board stays silent: no subscribe callback ever fires.
-  tasks=[{id:'task1',status:'done',executions:[{id:'e1',startedAt:1,endedAt:2,result:'succeeded',summary:{text:'fixed'}}]}];
+  // The turn ends, but no event reaches the plugin: only the next read can notice it.
+  items=[];
   const s=await tool.execute();
   assert.equal(s.bugs[0].status,'awaiting-verification');
   assert.equal(s.bugs[0].summary,'fixed');
@@ -82,14 +89,26 @@ test('a run that settled while no event arrived stops reporting as running',asyn
   assert.ok(saved.audit.some(a=>a.action==='succeeded'&&a.id==='p:bug:1'));
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
-test('a running row settles with a reason when the task board service is gone',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'feishu-noboard-run-'));const disposers=[];const routes=new Map();let tool;
+test('a running row is never silently marked failed when the session service disappears',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-nosession-run-'));const disposers=[];let tool;
  try{
-  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'running',taskId:'task1',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
-  const ctx={get:()=>undefined,connection:{},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'running',sessionId:'s1',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
+  const ctx={get:()=>undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:()=>()=>{}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  const s=await tool.execute();
+  assert.equal(s.bugs[0].status,'running');
+  assert.match(s.sessionMissing,/session service is unavailable/);
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
+});
+
+test('a row interrupted before its session existed fails with a next step',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-preparing-test-'));const disposers=[];let tool;
+ try{
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'preparing',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
+  const ctx={get:()=>undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:()=>()=>{}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
   await apply(ctx,{storageDir:dir});
   const s=await tool.execute();
   assert.equal(s.bugs[0].status,'failed');
-  assert.match(s.bugs[0].error,/task board service is unavailable/);
+  assert.match(s.bugs[0].error,/Interrupted during preparation/);
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
