@@ -29,7 +29,9 @@ export class SessionRunner {
         await c.selectModel({sessionId,provider:model.provider,model:model.model,...(model.reasoningEffort?{reasoningEffort:model.reasoningEffort}:{})});
       } catch {}
     }
-    await c.prompt({requestId:requestId??`feishu-${sessionId}`,sessionId,mode:'queue',content:[{type:'text',text:prompt}]});
+    // Direct Host calls bypass the Remote transport that normally supplies this signal.
+    const signal=new AbortController().signal;
+    await c.prompt({requestId:requestId??`feishu-${sessionId}`,sessionId,mode:'queue',content:[{type:'text',text:prompt}]},signal);
     return {sessionId};
   }
   // One cheap read answers "is anything still running" for every row, so polling never needs a

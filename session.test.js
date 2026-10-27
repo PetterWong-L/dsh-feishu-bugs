@@ -23,6 +23,20 @@ test('a repair is one named session prompt, not a task board task',async()=>{
   assert.deepEqual(calls[2],['selectModel',{sessionId:'s1',provider:'laien',model:'sol',reasoningEffort:'high'}]);
   assert.deepEqual(calls[3],['prompt',{requestId:'r1',sessionId:'s1',mode:'queue',content:[{type:'text',text:'fix it'}]}]);
 });
+test('a direct Host prompt receives the cancellation signal required for admission',async()=>{
+  let admitted=false;
+  const runner=new SessionRunner(()=>({
+    create:async()=>({sessionId:'s1'}),
+    prompt:async(request,signal)=>{
+      signal.throwIfAborted();
+      assert.ok(signal instanceof AbortSignal);
+      assert.equal(request.sessionId,'s1');
+      admitted=true;
+    },
+  }));
+  assert.deepEqual(await runner.launch({cwd:'/repo',prompt:'fix it'}),{sessionId:'s1'});
+  assert.equal(admitted,true);
+});
 test('a registered workspace is preferred over a bare directory',async()=>{
   const {calls,runner}=fake();
   await runner.launch({cwd:'/repo',workspaceId:'ws1',prompt:'x'});
