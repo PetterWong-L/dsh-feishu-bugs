@@ -34,3 +34,20 @@ test('an in-repo row keeps its own commit instead of the newest branch in the sh
  const source = await readFile(new URL('./index.js', import.meta.url), 'utf8');
  assert.match(source, /b\.inRepo&&await currentBranch\(b\.cwd\)!==b\.branch\)return \{\};/);
 });
+test('an in-repo row still offers verification buttons', async () => {
+  const source = await readFile(new URL('./client.js', import.meta.url), 'utf8');
+  const line = source.split('\n').find(l => l.includes("b.status==='awaiting-verification'&&h(React.Fragment,null"));
+  assert.ok(line, 'verification row must render');
+  assert.match(line, /b\.cwd!==b\.repo&&button\(t\('checkoutBranch'\)/, 'checkout stays worktree-only');
+  assert.match(line, /action:'verify',id:b\.id,passed:true/, 'pass must render for in-repo rows');
+  assert.match(line, /action:'verify',id:b\.id,passed:false/, 'reject must render for in-repo rows');
+});
+
+test('verification and duplicate decisions never need the task board plugin', async () => {
+  const source = await readFile(new URL('./index.js', import.meta.url), 'utf8');
+  const verify = source.slice(source.indexOf("if(args.action==='verify')"), source.indexOf("if(['start','retry','queue']"));
+  assert.ok(verify.length > 0);
+  assert.ok(!verify.includes('requireBoard'), 'verify must not require the board');
+  assert.match(source, /if\(\['start','retry','queue'\]\.includes\(args\.action\)\)requireBoard\(\);/);
+  assert.match(source, /export const inject=\['webServer','connection','tools'\];/, 'board is not an injected dependency');
+});
