@@ -18,3 +18,17 @@ test('restart reconciles accepted running tasks instead of allowing duplicate re
   await apply(ctx,{storageDir:dir});const s=await tool.execute();assert.equal(s.bugs[0].status,'running');assert.equal(s.configured,false);assert.equal(s.credentials,undefined);assert.equal(JSON.parse(await readFile(join(dir,'state.json'),'utf8')).bugs[0].status,'running');assert.ok(routes.has('/feishu-bugs/api'));
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
+test('panel still serves listings when the task board plugin is absent',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-noboard-test-'));const disposers=[];const routes=new Map();let tool;
+ try{
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'queued',repo:'/unused'}],audit:[]}));
+  const ctx={get:()=>undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  const s=await tool.execute();
+  assert.equal(s.taskBoard,false);assert.equal(s.boardMissing.includes('task board plugin is not enabled'),true);assert.equal(s.bugs.length,1);
+  const req=Readable.from([Buffer.from(JSON.stringify({action:'start',id:'p:bug:1'}))]);req.method='POST';req.headers={'content-type':'application/json','x-dsh-feishu-bugs':'1'};
+  let body='';await routes.get('/feishu-bugs/api')(req,{writeHead:()=>{},end:chunk=>{body+=chunk??'';}});
+  assert.match(body,/task board plugin is not enabled/);
+  assert.equal(JSON.parse(await readFile(join(dir,'state.json'),'utf8')).bugs[0].status,'queued');
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
+});

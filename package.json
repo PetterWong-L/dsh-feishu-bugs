@@ -1,6 +1,6 @@
 {
   "name": "@local/feishu-bugs",
-  "version": "1.12.2",
+  "version": "1.13.0",
   "private": false,
   "type": "module",
   "description": "Feishu Project bug workflow with isolated worktrees and human review gates.",
@@ -38,8 +38,7 @@
       "platform": "web",
       "immediately": true,
       "inject": [
-        "@deepseek-ai/dsh-client-ui-conversation",
-        "@linxin666/dsh-client-ui-task-board"
+        "@deepseek-ai/dsh-client-ui-conversation"
       ]
     },
     "engines": {
