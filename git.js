@@ -73,6 +73,7 @@ export async function prepareFix(repo,runs,bug) {
 }
 
 export async function headCommit(cwd){return git(cwd,['rev-parse','HEAD']);}
+export async function currentBranch(cwd){return git(cwd,['branch','--show-current']);}
 export async function changedPaths(cwd){const out=await git(cwd,['status','--porcelain']);return out?out.split('\n'):[];}
 export async function detachWorktree(cwd){const current=await git(cwd,['branch','--show-current']);if(current)await git(cwd,['checkout','--detach']);}
 export async function excludePath(cwd,rel){

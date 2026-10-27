@@ -86,3 +86,8 @@ test('worktree is provisioned with the generated workspace and a Pods link',asyn
  assert.match(second.provision,/differs/);
  await assert.rejects(stat(join(second.cwd,'Pods')));
 }finally{await rm(root,{recursive:true,force:true});}});
+test('currentBranch identifies the checked out branch so shared trees stay attributable',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-branch-'));const repo=join(root,'repo');try{
+ execFileSync('git',['init','-b','develop',repo]);
+ const {currentBranch}=await import('./git.js');
+ assert.equal(await currentBranch(repo),'develop');
+}finally{await rm(root,{recursive:true,force:true});}});

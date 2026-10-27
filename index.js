@@ -3,7 +3,7 @@ import {execFile} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {openStore,resolveStorageDir} from './store.js';
 import {Workflow,pruneUnstarted,markGone,cleanNote} from './workflow.js';
-import {prepareFix,prepareBranchInRepo,prepareBranch,validateWorktree,headCommit,changedPaths,detachWorktree,checkoutBranch,excludePath,commitAll,provisionWorktree} from './git.js';
+import {prepareFix,prepareBranchInRepo,prepareBranch,validateWorktree,headCommit,changedPaths,currentBranch,detachWorktree,checkoutBranch,excludePath,commitAll,provisionWorktree} from './git.js';
 import {DeviceAuth} from './auth.js';
 import {MeegleAPI} from './meegle.js';
 import {registerRoute} from './http.js';
@@ -97,6 +97,9 @@ export async function apply(ctx,config={}) {
  async function inspectWorktree(b){
   if(!b?.cwd)return {};
   try{
+   // In-repo branches share one working tree, so HEAD only describes this bug while its
+   // branch is checked out. Otherwise the newest fix would overwrite every other row.
+   if(b.inRepo&&await currentBranch(b.cwd)!==b.branch)return {};
    const [head,changed]=await Promise.all([headCommit(b.cwd),changedPaths(b.cwd)]);
    return {commit:head===b.base?null:head,dirty:changed.length,checkedOut:false};
   }catch{return {};}

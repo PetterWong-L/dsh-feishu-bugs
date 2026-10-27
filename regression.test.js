@@ -30,3 +30,7 @@ test('restarting a failed run offers the same optional note as starting one', as
   const host = await readFile(new URL('./workflow.js', import.meta.url), 'utf8');
   assert.match(host, /launch\(b,note,restart\?'restart':undefined\)/);
 });
+test('an in-repo row keeps its own commit instead of the newest branch in the shared tree', async () => {
+ const source = await readFile(new URL('./index.js', import.meta.url), 'utf8');
+ assert.match(source, /b\.inRepo&&await currentBranch\(b\.cwd\)!==b\.branch\)return \{\};/);
+});
