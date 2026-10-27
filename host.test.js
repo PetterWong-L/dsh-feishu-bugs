@@ -82,3 +82,14 @@ test('a run that settled while no event arrived stops reporting as running',asyn
   assert.ok(saved.audit.some(a=>a.action==='succeeded'&&a.id==='p:bug:1'));
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
+test('a running row settles with a reason when the task board service is gone',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-noboard-run-'));const disposers=[];const routes=new Map();let tool;
+ try{
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'running',taskId:'task1',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
+  const ctx={get:()=>undefined,connection:{},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  const s=await tool.execute();
+  assert.equal(s.bugs[0].status,'failed');
+  assert.match(s.bugs[0].error,/task board service is unavailable/);
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
+});

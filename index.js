@@ -117,6 +117,15 @@ export async function apply(ctx,config={}) {
  await save();
  async function pump(){if(active||stopped||!queue)return;active=true;try{if(state.bugs.some(b=>['running','preparing'].includes(b.status)))return;const next=state.bugs.find(b=>b.status==='queued');if(next)await workflow.start(next.id);else queue=false;}catch{queue=false;}finally{active=false;}}
  async function reconcile(){
+  const board=boardOf();
+  // Without the board service there is nothing to observe: a run's session lives there, so a row
+  // left in progress can never settle. Say so instead of spinning forever.
+  if(!board){
+   let changed=false;
+   for(const b of state.bugs.filter(x=>['running','preparing'].includes(x.status))){b.status='failed';b.error='The task board service is unavailable, so this run cannot settle. Enable the task board, then start the fix again.';changed=true;}
+   if(changed)await save();
+   return;
+  }
   const tasks=boardTasks();
   // The user may keep chatting in a bug's session after the first run settles. That starts a new
   // execution on the same task, so follow it instead of leaving the row stuck on an old outcome.
