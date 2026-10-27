@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,writeFile,mkdir,readFile,realpath,stat,lstat} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFileSync} from 'node:child_process';import {prepareBranch,prepareBranchInRepo,prepareFix,validateWorktree,detachWorktree,checkoutBranch,changedPaths,headCommit,commitAll} from './git.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm,writeFile,mkdir,readFile,realpath,stat,lstat} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFileSync} from 'node:child_process';import {prepareBranch,prepareBranchInRepo,prepareFix,validateWorktree,detachWorktree,checkoutBranch,changedPaths,headCommit,commitAll,removeWorktree,directorySize} from './git.js';
 test('in-repo fix branch refuses a dirty tree, then commits only the fix',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-inrepo-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{
  execFileSync('git',['init','-b','develop',repo]);git('config','user.email','t@e.test');git('config','user.name','T');
  await writeFile(join(repo,'a'),'a');await mkdir(join(repo,'Pods'),{recursive:true});await writeFile(join(repo,'Pods','keep'),'x');
@@ -90,4 +90,26 @@ test('currentBranch identifies the checked out branch so shared trees stay attri
  execFileSync('git',['init','-b','develop',repo]);
  const {currentBranch}=await import('./git.js');
  assert.equal(await currentBranch(repo),'develop');
+}finally{await rm(root,{recursive:true,force:true});}});
+
+test('removing a worktree frees the directory and keeps the branch, Pods and main repo',async()=>{const root=await mkdtemp(join(tmpdir(),'feishu-git-retire-'));const repo=join(root,'repo');const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();try{
+ execFileSync('git',['init','-b','develop',repo]);git('config','user.email','t@e.test');git('config','user.name','T');
+ await writeFile(join(repo,'a'),'a');await writeFile(join(repo,'.gitignore'),'Pods/\n');
+ await mkdir(join(repo,'Pods'),{recursive:true});await writeFile(join(repo,'Pods','keep'),'x');await writeFile(join(repo,'Podfile.lock'),'LOCK');
+ git('add','.');git('commit','-m','init');
+ await writeFile(join(repo,'wip.txt'),'mine');
+ const run=await prepareFix(repo,join(root,'worktrees'),{id:'p:bug:7',remoteId:7,title:'retire me'});
+ const wt=(...args)=>execFileSync('git',args,{cwd:run.cwd,encoding:'utf8'}).trim();
+ await writeFile(join(run.cwd,'shot.png'),Buffer.alloc(2048));wt('add','.');wt('commit','-q','-m','fix');
+ const size=await directorySize(run.cwd);
+ assert.ok(size>=2048,'the screenshots count toward the freed bytes');
+ await assert.rejects(removeWorktree(repo,repo),/main repository/);
+ const removed=await removeWorktree(repo,run.cwd);
+ assert.equal(removed.removed,true);assert.equal(removed.registered,true);
+ assert.equal(await readFile(join(run.cwd,'shot.png'),'utf8').catch(()=>null),null,'the checkout is gone');
+ assert.equal(await readFile(join(repo,'Pods','keep'),'utf8'),'x','the linked Pods tree belongs to the main repo');
+ assert.equal(await readFile(join(repo,'wip.txt'),'utf8'),'mine','uncommitted work in the main repo is untouched');
+ assert.equal(git('branch','--list',run.branch).includes(run.branch),true,'the branch survives for merging');
+ assert.equal(git('worktree','list').includes('worktrees'),false,'the worktree registration is pruned');
+ assert.deepEqual(await removeWorktree(repo,run.cwd),{removed:false,registered:false},'removing twice is harmless');
 }finally{await rm(root,{recursive:true,force:true});}});

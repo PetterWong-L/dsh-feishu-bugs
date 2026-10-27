@@ -1,9 +1,11 @@
-import {join} from 'node:path';
+import {join,sep} from 'node:path';
+import {readFileSync} from 'node:fs';
 import {execFile} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
+import {rm,realpath,stat} from 'node:fs/promises';
 import {openStore,resolveStorageDir} from './store.js';
 import {Workflow,pruneUnstarted,markGone,cleanNote} from './workflow.js';
-import {prepareFix,prepareBranchInRepo,prepareBranch,validateWorktree,headCommit,changedPaths,currentBranch,detachWorktree,checkoutBranch,excludePath,commitAll,provisionWorktree} from './git.js';
+import {prepareFix,prepareBranchInRepo,prepareBranch,validateWorktree,headCommit,changedPaths,currentBranch,detachWorktree,checkoutBranch,excludePath,commitAll,provisionWorktree,removeWorktree,directorySize} from './git.js';
 import {DeviceAuth} from './auth.js';
 import {MeegleAPI} from './meegle.js';
 import {registerRoute} from './http.js';
@@ -11,6 +13,9 @@ import {scrub} from './scrub.js';
 import {findWorkspace,listSchemes,pickScheme,runBuild} from './build.js';
 import {SessionRunner,SESSION_MISSING} from './session.js';
 export const name='feishu-bugs';
+// Read once at module load so `feishu_bug_status` reports the build the Host actually runs: the
+// number changes only after a restart or a hot reload, which makes stale code visible.
+const VERSION=JSON.parse(readFileSync(new URL('./package.json',import.meta.url),'utf8')).version;
 // Repairs run through the Host Session domain, which every deployment has. The task board is only
 // consulted for rows started by older releases, so disabling it no longer disables this panel.
 export const inject=['webServer','connection','tools'];
@@ -49,7 +54,7 @@ export async function apply(ctx,config={}) {
  const catalog=stored?.projectKey&&stored.projects?.length?stored:(seeded??stored??{projects:[],types:[],projectKey:null});
  if(catalog!==stored){state.catalog=catalog;await save();}
  let stopped=false,queue=false,active=false,building=null;
- const snapshot=()=>{ensureModels();return scrub({version:2,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,model:state.model??null,models:modelCatalog,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30),sessions:sessions.available(),sessionMissing:sessions.available()?null:SESSION_MISSING,taskBoard:Boolean(boardOf()?.apply)});};
+ const snapshot=()=>{ensureModels();return scrub({version:2,pluginVersion:VERSION,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,model:state.model??null,models:modelCatalog,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30),sessions:sessions.available(),sessionMissing:sessions.available()?null:SESSION_MISSING,taskBoard:Boolean(boardOf()?.apply)});};
  const ownerSnapshot=()=>({...snapshot(),auth:auth.ownerView()});
  const hasOpen=task=>task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt));
  const boardTasks=()=>{try{return boardOf()?.snapshot?.().tasks??[]}catch{return [];}};
@@ -73,17 +78,49 @@ export async function apply(ctx,config={}) {
   b.previousSessionIds=[...(b.previousSessionIds??[]),...(b.sessionId?[b.sessionId]:[])];b.sessionId=sessionId;b.settledAt=undefined;await save();
   return {sessionId};
  }
- async function dropWorkspace(b){
-  if(b?.inRepo)return;
-  const registry=registryOf();if(!b?.workspaceId||typeof registry?.delete!=='function')return;
-  // Deleting the registration also removes the workspace directory. Only retire a worktree
-  // whose work is already committed on the branch; otherwise the fix would be destroyed.
-  if(b.dirty>0||!b.commit)return;
+ const buildDir=b=>join(dir,'build',String(b.id).replace(/[^a-z0-9]+/gi,'-').slice(-40));
+ // An accepted fix is already committed on its branch, so the isolated checkout is disposable:
+ // its directory, its screenshots and its build products cost disk and nothing else. The branch
+ // and its objects stay in the repository, so acceptance, checkout and merging still work.
+ // Anything uncommitted, running, or living in the main repository is never touched.
+ async function retireWorktree(b){
+  if(!b?.cwd)return false;
+  // A fix made in the main repository owns no checkout, but its build products do cost disk.
+  const built=await directorySize(buildDir(b)).catch(()=>0);
+  if(b.inRepo){
+   if(!built)return false;
+   await rm(buildDir(b),{recursive:true,force:true}).catch(()=>{});
+   b.retired={at:new Date().toISOString(),worktree:null,bytes:built};
+   delete b.build;delete b.provision;
+   state.audit.push({time:new Date().toISOString(),action:'build-removed',id:b.id,bytes:built});
+   state.audit=state.audit.slice(-1000);await save();return true;
+  }
+  // Read the worktree again instead of trusting the last inspection: an agent or the user may
+  // have edited files after the branch was recorded.
+  try{Object.assign(b,await inspectWorktree(b));}catch{}
+  if(b.dirty>0){
+   state.audit.push({time:new Date().toISOString(),action:'worktree-kept',id:b.id,reason:'uncommitted changes'});state.audit=state.audit.slice(-1000);await save();return false;
+  }
   const task=boardTask(b.taskId);
-  if(task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt)))return;
-  try{await registry.delete(b.workspaceId);}catch{return;}
-  b.previousWorkspaceIds=[...(b.previousWorkspaceIds??[]),b.workspaceId];delete b.workspaceId;
-  state.audit.push({time:new Date().toISOString(),action:'workspace-removed',id:b.id});state.audit=state.audit.slice(-1000);await save();
+  if(task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt)))return false;
+  // A registered workspace owns its directory, so deleting the registration frees the checkout.
+  const registry=registryOf();
+  if(b.workspaceId&&typeof registry?.delete==='function'){try{await registry.delete(b.workspaceId);}catch{}}
+  const worktree=b.cwd;
+  // A directory deleted outside the panel (an older build, a manual cleanup) still needs its
+  // record reconciled, but it must not read as if this run had freed that space.
+  const present=await stat(worktree).then(()=>true).catch(()=>false);
+  let bytes=0;
+  try{bytes=await directorySize(worktree);}catch{}
+  try{await removeWorktree(b.repo,worktree);}catch(e){
+   state.audit.push({time:new Date().toISOString(),action:'worktree-remove-failed',id:b.id,error:String(e?.message??e).slice(0,200)});state.audit=state.audit.slice(-1000);await save();return false;
+  }
+  try{await rm(buildDir(b),{recursive:true,force:true});}catch{}
+  b.previousWorkspaceIds=[...(b.previousWorkspaceIds??[]),...(b.workspaceId?[b.workspaceId]:[])];
+  b.retired={at:new Date().toISOString(),worktree,bytes:bytes+built};
+  delete b.cwd;delete b.workspaceId;delete b.build;delete b.provision;
+  state.audit.push({time:new Date().toISOString(),action:present?'worktree-removed':'worktree-already-gone',id:b.id,bytes:b.retired.bytes});
+  state.audit=state.audit.slice(-1000);await save();return true;
  }
  // Record what a finished run actually left behind: the branch commit, or uncommitted paths.
  async function inspectWorktree(b){
@@ -96,7 +133,7 @@ export async function apply(ctx,config={}) {
    return {commit:head===b.base?null:head,dirty:changed.length,checkedOut:false};
   }catch{return {};}
  }
- const workflow=new Workflow(state,{save,prepare:b=>prepareFix(b.repo,join(dir,'worktrees'),b),launch,afterClose:dropWorkspace,inspect:inspectWorktree});
+ const workflow=new Workflow(state,{save,prepare:b=>prepareFix(b.repo,join(dir,'worktrees'),b),launch,afterClose:retireWorktree,inspect:inspectWorktree});
  // Restart never blindly replays branch creation or launches a second session.
  // A run is live again only while its session still has an open turn. Rows left in preparation
  // never reached a session, so they settle as failures with a clear next step.
@@ -142,8 +179,16 @@ export async function apply(ctx,config={}) {
  // activates, a reload can land mid-run, or a session keeps running after its task settled.
  // Polling the ledger keeps a row from sitting on "修复中" until the next browser event.
  ctx.effect(()=>{const timer=setInterval(()=>{if(!stopped)kick();},5000);return()=>clearInterval(timer);});
- // Workspaces registered before this cleanup existed (or whose delete failed) must not linger forever.
- for(const b of state.bugs)if(b.status==='verified')await dropWorkspace(b);
+ // Verified rows recorded before this cleanup existed still hold their checkouts. Reclaim them in
+ // the background: the directories can be gigabytes, and the panel must open without waiting.
+ void(async()=>{
+  const root=await realpath(join(dir,'worktrees')).catch(()=>join(dir,'worktrees'));
+  for(const b of state.bugs){
+   if(b.status!=='verified'||!b.cwd)continue;
+   if(!b.inRepo&&!b.cwd.startsWith(root+sep))continue;
+   await retireWorktree(b).catch(()=>false);
+  }
+ })();
  // Older runs left their work uncommitted; refresh what each worktree actually holds so the
  // panel can offer commit-then-checkout instead of showing stale emptiness.
  for(const b of state.bugs.filter(x=>x.cwd&&!hasOpen(boardTask(x.taskId))))Object.assign(b,await inspectWorktree(b));
@@ -192,6 +237,8 @@ export async function apply(ctx,config={}) {
     if(!b)throw Error('No such bug in this panel');
     if(!b.gone)throw Error('Only items that left the current filter can be removed');
     if(b.status==='running'||hasOpen(boardTask(b.taskId)))throw Error('An execution is still running for this bug');
+    // Dropping the row must not leave its checkout behind: that is the disk leak this avoids.
+    await retireWorktree(b).catch(()=>false);
     state.bugs=state.bugs.filter(item=>item.id!==b.id);state.audit.push({time:new Date().toISOString(),action:'removed',id:b.id});await save();return;
    }
    if(args.action==='model'){
@@ -236,7 +283,7 @@ export async function apply(ctx,config={}) {
     const workspace=await findWorkspace(b.cwd);if(!workspace)throw Error('No .xcworkspace in this branch; provision build prerequisites first');
     const scheme=b.scheme??pickScheme(await listSchemes(b.cwd,workspace),workspace);
     if(!scheme)throw Error(`Could not pick a scheme for ${workspace}. Set "scheme" in the bundle config.`);
-    const derivedData=join(dir,'build',String(b.id).replace(/[^a-z0-9]+/gi,'-').slice(-40));
+    const derivedData=buildDir(b);
     const result=await runBuild({cwd:b.cwd,workspace,scheme,derivedData});
     b.scheme=scheme;b.build={state:result.ok?'passed':'failed',at:new Date().toISOString(),scheme,app:result.app,ms:result.ms,log:result.log};
     state.audit.push({time:new Date().toISOString(),action:result.ok?'build-passed':'build-failed',id:b.id});
@@ -247,7 +294,11 @@ export async function apply(ctx,config={}) {
   if(args.action==='checkout'){
    const b=state.bugs.find(x=>x.id===args.id);if(!b?.branch)throw Error('This bug has no branch yet');
    const target=args.target==='develop'?'develop':b.branch;
-   if(target===b.branch){if(b.dirty)throw Error('The worktree still has uncommitted changes; retry so the agent commits them first');await detachWorktree(b.cwd);}
+   if(target===b.branch){
+    if(!b.cwd)throw Error('This branch has no checkout any more; the main repository holds it, use "develop" to go back');
+    if(b.dirty)throw Error('The worktree still has uncommitted changes; retry so the agent commits them first');
+    await detachWorktree(b.cwd);
+   }
    await checkoutBranch(b.repo,target);
    state.audit.push({time:new Date().toISOString(),action:`main-repo: ${target}`,id:b.id});state.audit=state.audit.slice(-1000);await save();return;
   }

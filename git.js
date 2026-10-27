@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { realpath,mkdir,readFile,appendFile,copyFile,symlink,stat,readdir } from 'node:fs/promises';
-import { isAbsolute,join } from 'node:path';
+import { realpath,mkdir,readFile,appendFile,copyFile,symlink,stat,readdir,rm } from 'node:fs/promises';
+import { isAbsolute,join,sep } from 'node:path';
 import { createHash } from 'node:crypto';
 const exec=promisify(execFile);
 async function git(cwd,args){const {stdout}=await exec('git',args,{cwd,timeout:30000,maxBuffer:1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0'}});return stdout.trim();}
@@ -76,6 +76,42 @@ export async function headCommit(cwd){return git(cwd,['rev-parse','HEAD']);}
 export async function currentBranch(cwd){return git(cwd,['branch','--show-current']);}
 export async function changedPaths(cwd){const out=await git(cwd,['status','--porcelain']);return out?out.split('\n'):[];}
 export async function detachWorktree(cwd){const current=await git(cwd,['branch','--show-current']);if(current)await git(cwd,['checkout','--detach']);}
+
+// An accepted fix lives in its branch commit; the worktree is only a checked-out copy plus
+// screenshots and build products, and one worktree per finished bug fills the disk. Removing the
+// worktree keeps the branch and its objects, so acceptance and merging stay possible afterwards.
+// The guard against uncommitted work belongs to the caller: this function deletes what it finds.
+export async function removeWorktree(repo,cwd){
+ if(!isAbsolute(repo)||!isAbsolute(cwd))throw Error('Absolute worktree and repository paths are required');
+ const root=await realpath(repo);
+ const target=await realpath(cwd).catch(()=>null);
+ // A symlink, a missing path or the repository itself is never a worktree to delete.
+ if(!target)return {removed:false,registered:false};
+ if(target===root||root.startsWith(target+sep))throw Error('Refusing to remove the main repository');
+ // Registered worktrees are deleted through git so the administrative entry goes with the
+ // directory; leftovers from an interrupted prepare are plain files and only need pruning.
+ let gitRemoved=false;
+ try{await git(root,['worktree','remove','--force',target]);gitRemoved=true;}catch{}
+ // rm never follows the Pods symlink, so the main repository's Pods survive this path too.
+ if(!gitRemoved)await rm(target,{recursive:true,force:true});
+ await git(root,['worktree','prune']).catch(()=>{});
+ return {removed:true,registered:gitRemoved};
+}
+
+// Bytes a directory occupies, without following symlinks: a linked Pods tree belongs to the main
+// repository and must not be counted, let alone walked.
+export async function directorySize(path){
+ let total=0;
+ for(const entry of await readdir(path,{withFileTypes:true}).catch(()=>[])){
+  const child=join(path,entry.name);
+  try{
+   if(entry.isSymbolicLink())continue;
+   if(entry.isDirectory())total+=await directorySize(child);
+   else if(entry.isFile())total+=(await stat(child)).size;
+  }catch{}
+ }
+ return total;
+}
 export async function excludePath(cwd,rel){
   const common=await git(cwd,['rev-parse','--path-format=absolute','--git-common-dir']);
   const file=join(common,'info','exclude');

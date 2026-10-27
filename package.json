@@ -1,6 +1,6 @@
 {
   "name": "@local/feishu-bugs",
-  "version": "1.13.9",
+  "version": "1.13.10",
   "private": false,
   "type": "module",
   "description": "Feishu Project bug workflow with isolated worktrees and human review gates.",
@@ -28,7 +28,8 @@
   ],
   "scripts": {
     "test": "node --test *.test.js",
-    "check": "node --check index.js && node --check client.js"
+    "check": "node --check index.js && node --check client.js",
+    "reload": "node scripts/reload.mjs"
   },
   "dsh": {
     "bundle": {
