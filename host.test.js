@@ -32,3 +32,17 @@ test('panel still serves listings when the task board plugin is absent',async()=
   assert.equal(JSON.parse(await readFile(join(dir,'state.json'),'utf8')).bugs[0].status,'queued');
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
+test('a settled failure is not revived on every reload',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-revive-test-'));const disposers=[];const routes=new Map();let tool;
+ const board={snapshot:()=>({tasks:[{id:'task1',status:'failed',executions:[{id:'e1',startedAt:1,endedAt:2,result:'failed',error:'boom'}]}]}),subscribe:()=>()=>{}};
+ try{
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'failed',taskId:'task1',cwd:'/unused',branch:'fix/bug',repo:'/unused',error:'boom'}],audit:[]}));
+  const ctx={get:()=>board,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  const s=await tool.execute();
+  assert.equal(s.bugs[0].status,'failed');assert.equal(s.bugs[0].error,'boom');
+  const saved=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));
+  assert.equal(saved.bugs[0].status,'failed');
+  assert.equal(saved.audit.filter(a=>a.action==='failed').length,0);
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
+});

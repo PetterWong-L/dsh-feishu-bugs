@@ -95,9 +95,12 @@ export async function apply(ctx,config={}) {
  }
  const workflow=new Workflow(state,{save,prepare:b=>prepareFix(b.repo,join(dir,'worktrees'),b),launch,afterClose:dropWorkspace,inspect:inspectWorktree});
  // Restart never blindly replays branch creation or launches a second session.
+ // Revive only work that is really live again: an open execution, or a run we were watching
+ // whose execution ended while the panel was down. A bug that already settled as failed must
+ // stay failed, otherwise every reload re-marks it and spams the audit log.
  for(const b of state.bugs){
   const task=boardTask(b.taskId);
-  if(['preparing','failed','running'].includes(b.status)&&(hasOpen(task)||task?.executions?.at(-1)?.endedAt))b.status='running';
+  if(hasOpen(task)||(b.status==='running'&&task?.executions?.at(-1)?.endedAt))b.status='running';
   else if(b.status==='preparing'){b.status='failed';b.error='Interrupted during preparation. Inspect existing branch/task before recovery.';}
  }
  await save();
