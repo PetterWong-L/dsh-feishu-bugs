@@ -10,11 +10,14 @@ import {registerRoute} from './http.js';
 import {scrub} from './scrub.js';
 import {findWorkspace,listSchemes,pickScheme,runBuild} from './build.js';
 export const name='feishu-bugs';
-// The task board is optional: without it the panel stays readable and every action that
-// needs a session fails with one clear reason instead of the whole plugin going pending.
-export const inject={required:['webServer','connection','tools'],optional:['taskBoard','workspaceRegistry']};
+// The task board is deliberately NOT injected: this deployment treats it as optional, so the
+// panel keeps loading while listing stays readable. Services are resolved lazily instead, and
+// every action that needs a session reports one clear reason when it is missing.
+export const inject=['webServer','connection','tools'];
 export async function apply(ctx,config={}) {
- const dir=resolveStorageDir(config),store=await openStore(dir),state=store.state,board=ctx.get('taskBoard'),registry=ctx.get('workspaceRegistry'),sessions=ctx.get('sessionController');
+ const dir=resolveStorageDir(config),store=await openStore(dir),state=store.state,sessions=ctx.get('sessionController');
+ const service=n=>{try{return ctx.get(n)??null}catch{return null}};
+ const boardOf=()=>service('taskBoard'),registryOf=()=>service('workspaceRegistry');
  // Only offer models this deployment can actually route, straight from the Host catalog.
  let modelCatalog=null;
  async function refreshModels(){
@@ -38,12 +41,12 @@ export async function apply(ctx,config={}) {
  if(catalog!==stored){state.catalog=catalog;await save();}
  let stopped=false,queue=false,active=false,building=null;
  const BOARD_MISSING='The task board plugin is not enabled, so no fix session can be started. Enable the task board (任务面板) in the plugin manager and reopen this panel.';
- const snapshot=()=>scrub({version:2,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,model:state.model??null,models:modelCatalog,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30),taskBoard:Boolean(board?.apply),boardMissing:board?null:BOARD_MISSING});
+ const snapshot=()=>scrub({version:2,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,model:state.model??null,models:modelCatalog,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30),taskBoard:Boolean(boardOf()?.apply),boardMissing:boardOf()?null:BOARD_MISSING});
  const ownerSnapshot=()=>({...snapshot(),auth:auth.ownerView()});
  const hasOpen=task=>task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt));
- const boardTasks=()=>{try{return board?.snapshot?.().tasks??[]}catch{return [];}};
+ const boardTasks=()=>{try{return boardOf()?.snapshot?.().tasks??[]}catch{return [];}};
  const boardTask=id=>boardTasks().find(t=>t.id===id);
- const requireBoard=()=>{if(!board||typeof board.apply!=='function')throw Error(BOARD_MISSING);};
+ const requireBoard=()=>{const b=boardOf();if(!b||typeof b.apply!=='function')throw Error(BOARD_MISSING);return b;};
  function assertNoOpen(){if(state.bugs.some(b=>[b.taskId,...(b.previousTaskIds??[])].some(id=>hasOpen(boardTask(id)))))throw Error('An existing execution is still open; use task board to inspect/stop it before retrying');}
  function modelInput(){
   const m=state.model;
@@ -51,7 +54,7 @@ export async function apply(ctx,config={}) {
   return {model:`${m.provider}/${m.model}`,...(m.reasoningEffort?{reasoningEffort:m.reasoningEffort}:{})};
  }
  async function launch(b,feedback='',mode) {
-  requireBoard();assertNoOpen();await validateWorktree(b);
+  const board=requireBoard();assertNoOpen();await validateWorktree(b);
   let shotNotes='';
   try{
    const a=await api.attachments(b.projectKey,b.remoteId,b.cwd);
@@ -62,6 +65,7 @@ export async function apply(ctx,config={}) {
   // Work inside the repository that already owns this directory, so the sidebar gains no entry.
     // In-repo fixes reuse the repository workspace; isolated ones get a temporary entry of their own.
   const title=b.inRepo?(b.cwd.split('/').filter(Boolean).at(-1)||'repository'):`Feishu ${b.remoteId}`;
+  const registry=registryOf();
   if(!registry?.create||!registry?.resolveByPath)throw Error('The workspace registry is unavailable, so this fix has nowhere to run. Enable the task board plugin and reopen this panel.');
   const workspace=await registry.resolveByPath(b.cwd)??await registry.create(b.cwd,title);
   const taskId=randomUUID();b.previousTaskIds=[...(b.previousTaskIds??[]),...(b.taskId?[b.taskId]:[])];b.taskId=taskId;await save();
@@ -71,7 +75,7 @@ export async function apply(ctx,config={}) {
  }
  async function dropWorkspace(b){
   if(b?.inRepo)return;
-  if(!b?.workspaceId||typeof registry?.delete!=='function')return;
+  const registry=registryOf();if(!b?.workspaceId||typeof registry?.delete!=='function')return;
   // Deleting the registration also removes the workspace directory. Only retire a worktree
   // whose work is already committed on the branch; otherwise the fix would be destroyed.
   if(b.dirty>0||!b.commit)return;
@@ -114,7 +118,7 @@ export async function apply(ctx,config={}) {
   await pump();
  }
  let reconcileTail=Promise.resolve();
- if(typeof board?.subscribe==='function')ctx.effect(()=>board.subscribe(()=>{reconcileTail=reconcileTail.then(reconcile).catch(()=>{queue=false;});}));
+ const subscribed=boardOf();if(typeof subscribed?.subscribe==='function')ctx.effect(()=>subscribed.subscribe(()=>{reconcileTail=reconcileTail.then(reconcile).catch(()=>{queue=false;});}));
  await reconcile();
  // Workspaces registered before this cleanup existed (or whose delete failed) must not linger forever.
  for(const b of state.bugs)if(b.status==='verified')await dropWorkspace(b);
