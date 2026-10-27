@@ -46,3 +46,39 @@ test('a settled failure is not revived on every reload',async()=>{
   assert.equal(saved.audit.filter(a=>a.action==='failed').length,0);
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
 });
+test('the repair-model catalog survives a late session controller registration',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-model-catalog-test-'));const disposers=[];const routes=new Map();let tool;
+ const board={snapshot:()=>({tasks:[]}),subscribe:()=>()=>{}};
+ const services=new Map([['taskBoard',board],['connection',{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}}],['webServer',{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}}],['tools',{register:t=>{tool=t;return()=>{};}}]]);
+ const ctx={get:n=>services.get(n),connection:services.get('connection'),webServer:services.get('webServer'),tools:services.get('tools'),effect(fn){const d=fn();if(d)disposers.push(d);}};
+ try{
+  await apply(ctx,{storageDir:dir});
+  // No session controller yet: the panel must still serve a snapshot instead of throwing.
+  assert.equal((await tool.execute()).models,null);
+  services.set('sessionController',{modelCatalog:async()=>({default:{provider:'laien',model:'gpt-6.1-sol'},groups:[{id:'laien',name:'Laien',models:[{id:'gpt-6.1-sol',name:'GPT-6.1 Sol',reasoning:{defaultEffort:'high'}}]}]})});
+  let late=await tool.execute();
+  for(let i=0;i<50&&!late.models;i++){await new Promise(r=>setTimeout(r,10));late=await tool.execute();}
+  assert.equal(late.models.groups[0].id,'laien');
+  assert.equal(late.models.groups[0].models[0].id,'gpt-6.1-sol');
+  assert.equal(late.models.groups[0].models[0].reasoningEffort,'high');
+  assert.equal(late.models.default.model,'gpt-6.1-sol');
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
+});
+test('a run that settled while no event arrived stops reporting as running',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-settle-test-'));const disposers=[];let tool;
+ let tasks=[{id:'task1',status:'running',executions:[{id:'e1',startedAt:1}]}];
+ const board={snapshot:()=>({tasks}),subscribe:()=>()=>{}};
+ try{
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',title:'Crash',status:'running',taskId:'task1',cwd:'/unused',branch:'fix/bug',repo:'/unused'}],audit:[]}));
+  const ctx={get:()=>board,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:()=>()=>{}},tools:{register:t=>{tool=t;return()=>{};}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  // The execution ends, but the board stays silent: no subscribe callback ever fires.
+  tasks=[{id:'task1',status:'done',executions:[{id:'e1',startedAt:1,endedAt:2,result:'succeeded',summary:{text:'fixed'}}]}];
+  const s=await tool.execute();
+  assert.equal(s.bugs[0].status,'awaiting-verification');
+  assert.equal(s.bugs[0].summary,'fixed');
+  const saved=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));
+  assert.equal(saved.bugs[0].status,'awaiting-verification');
+  assert.ok(saved.audit.some(a=>a.action==='succeeded'&&a.id==='p:bug:1'));
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});}
+});

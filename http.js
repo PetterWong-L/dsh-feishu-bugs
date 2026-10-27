@@ -20,7 +20,7 @@ function registerApi(ctx,run,snapshot) {
   const admission=ctx.connection.admit(req);
   if('rejection' in admission)return reply(admission.rejection,{error:'Authentication required'});
   if(admission.peer.id!==ctx.connection.browserPeer.id)return reply(403,{error:'Owner browser required'});
-  if(req.method==='GET')return reply(200,snapshot());
+  if(req.method==='GET')return reply(200,await snapshot());
   if(req.method!=='POST')return reply(405,{error:'GET or POST required'});
   const site=req.headers['sec-fetch-site'];
   if(site!==undefined&&site!=='same-origin')return reply(403,{error:'Same origin required'});
@@ -35,7 +35,7 @@ function registerApi(ctx,run,snapshot) {
   }
   if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??''))return reply(415,{error:'JSON required'});
   try{let n=0;const chunks=[];for await(const chunk of req){n+=chunk.length;if(n>32768)return reply(413,{error:'Request too large'});chunks.push(chunk);}
-   const args=JSON.parse(Buffer.concat(chunks).toString('utf8'));await run(args);return reply(200,snapshot());
+   const args=JSON.parse(Buffer.concat(chunks).toString('utf8'));await run(args);return reply(200,await snapshot());
   }catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid JSON':String(e.message).slice(0,400)});}
  }});
 }

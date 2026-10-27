@@ -15,18 +15,26 @@ export const name='feishu-bugs';
 // every action that needs a session reports one clear reason when it is missing.
 export const inject=['webServer','connection','tools'];
 export async function apply(ctx,config={}) {
- const dir=resolveStorageDir(config),store=await openStore(dir),state=store.state,sessions=ctx.get('sessionController');
+ const dir=resolveStorageDir(config),store=await openStore(dir),state=store.state;
  const service=n=>{try{return ctx.get(n)??null}catch{return null}};
- const boardOf=()=>service('taskBoard'),registryOf=()=>service('workspaceRegistry');
+ const boardOf=()=>service('taskBoard'),registryOf=()=>service('workspaceRegistry'),sessionsOf=()=>service('sessionController');
  // Only offer models this deployment can actually route, straight from the Host catalog.
- let modelCatalog=null;
+ // The session controller is not a declared dependency, so it can register after this plugin
+ // activates; resolving it once here would leave the repair-model picker permanently empty.
+ let modelCatalog=null,modelFetchAt=0;
  async function refreshModels(){
   try{
-   const c=await sessions?.modelCatalog?.();if(!c)return;
+   const c=await sessionsOf()?.modelCatalog?.();if(!c)return;
    modelCatalog={default:c.default?{provider:c.default.provider,model:c.default.model,reasoningEffort:c.default.reasoningEffort??null}:null,
     groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,models:(g.models??[]).map(m=>({id:m.id,name:m.name,reasoningEffort:m.reasoning?.defaultEffort??null}))}))};
    notify();
   }catch{modelCatalog=null;}
+ }
+ // Called from snapshot(): retries once the session controller exists, and never hammers it.
+ function ensureModels(){
+  if(modelCatalog||!sessionsOf())return;
+  const now=Date.now();if(now-modelFetchAt<2000)return;
+  modelFetchAt=now;void refreshModels();
  }
  const listeners=new Set();
  const save=async()=>{await store.save();for(const fn of listeners)fn();};
@@ -41,7 +49,7 @@ export async function apply(ctx,config={}) {
  if(catalog!==stored){state.catalog=catalog;await save();}
  let stopped=false,queue=false,active=false,building=null;
  const BOARD_MISSING='The task board plugin is not enabled, so no fix session can be started. Enable the task board (任务面板) in the plugin manager and reopen this panel.';
- const snapshot=()=>scrub({version:2,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,model:state.model??null,models:modelCatalog,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30),taskBoard:Boolean(boardOf()?.apply),boardMissing:boardOf()?null:BOARD_MISSING});
+ const snapshot=()=>{ensureModels();return scrub({version:2,configured:auth.status().state==='authenticated',auth:auth.status(),catalog,queue,selection:state.selection,model:state.model??null,models:modelCatalog,sync:state.sync??null,bugs:state.bugs.map(({description,...b})=>b),audit:state.audit.slice(-30),taskBoard:Boolean(boardOf()?.apply),boardMissing:boardOf()?null:BOARD_MISSING});};
  const ownerSnapshot=()=>({...snapshot(),auth:auth.ownerView()});
  const hasOpen=task=>task&&(task.status==='running'||task.executions?.some(e=>!e.endedAt));
  const boardTasks=()=>{try{return boardOf()?.snapshot?.().tasks??[]}catch{return [];}};
@@ -121,8 +129,15 @@ export async function apply(ctx,config={}) {
   await pump();
  }
  let reconcileTail=Promise.resolve();
- const subscribed=boardOf();if(typeof subscribed?.subscribe==='function')ctx.effect(()=>subscribed.subscribe(()=>{reconcileTail=reconcileTail.then(reconcile).catch(()=>{queue=false;});}));
+ const kick=()=>{reconcileTail=reconcileTail.then(reconcile).catch(()=>{queue=false;});return reconcileTail;};
+ // Reads must not trust the cached state: a run can settle while no event reaches us.
+ const settle=async()=>{if(state.bugs.some(b=>['running','preparing'].includes(b.status)))await kick();else await reconcileTail;};
+ const subscribed=boardOf();if(typeof subscribed?.subscribe==='function')ctx.effect(()=>subscribed.subscribe(kick));
  await reconcile();
+ // Events are the fast path, but they can be missed: the board may load after this plugin
+ // activates, a reload can land mid-run, or a session keeps running after its task settled.
+ // Polling the ledger keeps a row from sitting on "修复中" until the next browser event.
+ ctx.effect(()=>{const timer=setInterval(()=>{if(!stopped)kick();},5000);return()=>clearInterval(timer);});
  // Workspaces registered before this cleanup existed (or whose delete failed) must not linger forever.
  for(const b of state.bugs)if(b.status==='verified')await dropWorkspace(b);
  // Older runs left their work uncommitted; refresh what each worktree actually holds so the
@@ -179,6 +194,7 @@ export async function apply(ctx,config={}) {
     const next=args.model??null;
     if(next!==null){
      if(typeof next!=='object'||typeof next.provider!=='string'||typeof next.model!=='string')throw Error('Invalid model selection');
+     if(!modelCatalog)await refreshModels();
      const group=modelCatalog?.groups?.find(g=>g.id===next.provider);
      if(!group?.models.some(m=>m.id===next.model))throw Error('That model is not offered by this deployment; refresh the panel');
     }
@@ -240,11 +256,11 @@ export async function apply(ctx,config={}) {
    throw Error('Unknown action');
   });actionTail=p.catch(()=>{});return p;
  }
- ctx.effect(()=>registerRoute(ctx,action,ownerSnapshot,subscribe));
+ ctx.effect(()=>registerRoute(ctx,action,async()=>{await settle();return ownerSnapshot();},subscribe));
  void refreshModels();
  // Verify the keychain-backed login once on startup so a reloaded plugin settles on the real
  // state instead of staying "unauthenticated" until the browser happens to open the panel.
  void auth.check().catch(()=>{});
- ctx.effect(()=>ctx.tools.register({name:'feishu_bug_status',description:'Read imported Feishu bug workflow status. Human duplicate decisions, verification and starting fixes are available only in the owner browser panel. No credentials returned. Does not synchronize or start work.',parameters:{type:'object',properties:{},additionalProperties:false},output:{schema:{type:'object',additionalProperties:true},render:(_,v)=>[{type:'text',text:JSON.stringify(v)}]},execute:async()=>snapshot()}));
+ ctx.effect(()=>ctx.tools.register({name:'feishu_bug_status',description:'Read imported Feishu bug workflow status. Human duplicate decisions, verification and starting fixes are available only in the owner browser panel. No credentials returned. Does not synchronize or start work.',parameters:{type:'object',properties:{},additionalProperties:false},output:{schema:{type:'object',additionalProperties:true},render:(_,v)=>[{type:'text',text:JSON.stringify(v)}]},execute:async()=>{await settle();return snapshot();}}));
  ctx.effect(()=>()=>{stopped=true;queue=false;auth.dispose();});
 }
