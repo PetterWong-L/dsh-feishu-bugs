@@ -39,20 +39,25 @@
 | 面板运行环境 | DSH Web GUI（`dsh web`） | 当前桌面版 |
 | Node.js（随 DSH 提供） | `>= 22` | 25.2.0 |
 | 官方 Meegle CLI | 固定 `@lark-project/meegle@1.0.27` | 1.0.27 |
-| 必需 DSH 扩展 | 任务面板插件（提供 `taskBoard` / `workspaceRegistry`） | 0.4.8 |
+| 必需 DSH 扩展 | 无（只用核心服务 `webServer`/`connection`/`tools`/`slots`/`locale`） | — |
+| 可选 DSH 扩展 | 任务面板插件（提供 `taskBoard` / `workspaceRegistry`） | 0.4.8 |
 | 面板内构建（可选） | Xcode + iOS Simulator SDK（`xcodebuild`，不传 `-sdk`） | Xcode 27.1 / iOS 27.1 SDK |
 | 操作系统 | 需要系统钥匙串与 git | macOS |
 
 **支持策略**
 
-- `1.12.x` 为当前支持版本，修复以补丁版本发布（当前 `1.12.2`）。
+- `1.13.x` 为当前支持版本，修复以补丁版本发布（当前 `1.13.3`）。
 - DSH 或 Meegle CLI 出现破坏性变更时，发布新的次版本并在 [CHANGELOG.md](CHANGELOG.md) 标注兼容范围。
-- 低于 `0.2.1-rc.2` 的 DSH 不受支持；缺少任务面板插件时面板会加载失败，而不是降级执行。
+- 低于 `0.2.1-rc.2` 的 DSH 不受支持；缺少任务面板插件时面板会降级为只读，而不是加载失败。
 - 仅支持单用户本机使用：Host 必须运行，面板跟随 owner 浏览器身份。
 
 ## 安装
 
-前置：DSH `>= 0.2.1-rc.2`。任务面板插件（`@linxin666/dsh-client-ui-task-board`）是**可选**依赖：启用时面板可以启动/排队/重试修复；未启用时面板照常打开、缺陷列表与历史可读，但所有会创建会话的操作会禁用并在顶部说明原因。
+前置：DSH `>= 0.2.1-rc.2`。除此之外**不硬依赖任何第三方插件**：
+
+- 宿主只声明核心服务 `webServer`、`connection`、`tools`；任务看板（`taskBoard`）与工作区注册表（`workspaceRegistry`）在动作触发时按需 `ctx.get`。
+- 客户端只声明核心服务 `slots`、`locale`；目录选择器（`uiWorkspace`）与任务看板入口（`layout`）按需获取，取不到就给出提示。
+- 因此启用任务面板（`@linxin666/dsh-client-ui-task-board`）时面板可以启动/排队/重试修复；未启用时面板照常打开、缺陷列表与历史可读，只是所有会创建会话的操作会禁用并在顶部说明原因。
 
 ```sh
 git clone https://github.com/PetterWong-L/dsh-feishu-bugs.git
