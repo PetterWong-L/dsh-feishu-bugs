@@ -16,11 +16,12 @@ export class SessionRunner {
   }
   // Create the session, name it so the sidebar is readable, apply the chosen model and hand over
   // the repair prompt. Only the session id is persisted; nothing else about it is our state.
-  async launch({cwd,workspaceId,title,prompt,model,requestId}) {
+  async launch({cwd,title,prompt,model,requestId}) {
     const c=this.ctrl();
-    // A registered workspace is the most reliable target; a bare cwd lets the Host adopt the
-    // directory on its own, which keeps isolated worktrees free of sidebar entries.
-    const created=await c.create(workspaceId?{workspaceId}:{cwd});
+    // Always create from the directory the repair runs in. A session created from a workspace id
+    // runs in that workspace's own path, which is the main repository rather than the isolated
+    // checkout, so grouping happens after creation instead (see group() in index.js).
+    const created=await c.create({cwd});
     const sessionId=created?.sessionId;
     if (!sessionId) throw Error('The session service did not return a session id');
     if (title&&typeof c.rename==='function') { try { await c.rename({sessionId,title}); } catch {} }

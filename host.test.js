@@ -191,3 +191,57 @@ test('a verified in-repo fix drops its build products and keeps the repository',
   assert.equal(saved.bugs[0].build,undefined);
  }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});await rm(repo,{recursive:true,force:true});}
 });
+test('an isolated worktree session gets its own temporary workspace row',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-group-'));const root=await mkdtemp(join(tmpdir(),'feishu-group-repo-'));const disposers=[];const routes=new Map();
+ const repo=join(root,'repo'),worktree=join(root,'worktrees','bug1');const created=[],workspaces=[];
+ let attached=null;
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+ try{
+  execFileSync('git',['init','-b','develop',repo]);git('config','user.email','t@e.test');git('config','user.name','T');
+  await writeFile(join(repo,'a'),'a');git('add','.');git('commit','-m','init');
+  const base=git('rev-parse','develop');
+  git('worktree','add','-q','-b','fix/feishu-1',worktree,'develop');
+  const wt=(...args)=>execFileSync('git',args,{cwd:worktree,encoding:'utf8'}).trim();
+  await writeFile(join(worktree,'fix.txt'),'fixed');wt('add','.');wt('commit','-q','-m','fix');
+  const commit=wt('rev-parse','HEAD');
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:1',remoteId:1,title:'Crash',status:'changes-requested',repo,cwd:worktree,branch:'fix/feishu-1',base,commit,dirty:0}],audit:[]}));
+  const sessions={create:async r=>{created.push(r);return {sessionId:'s9'};},prompt:async()=>({accepted:true}),list:async()=>({items:[]}),inspect:async()=>({events:[]})};
+  const registry={create:async(p,title)=>{workspaces.push({path:p,title});return {id:'ws-wt',attachSession:async id=>{attached=id;}};}};
+  const ctx={get:n=>n==='sessionController'?sessions:n==='workspaceRegistry'?registry:n==='taskBoard'?{snapshot:()=>({tasks:[]}),subscribe:()=>()=>{}}:undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:()=>()=>{}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  const req=Readable.from([Buffer.from(JSON.stringify({action:'retry',id:'p:bug:1',feedback:'still crashes'}))]);
+  req.method='POST';req.headers={'content-type':'application/json','x-dsh-feishu-bugs':'1'};
+  await routes.get('/feishu-bugs/api')(req,{writeHead:()=>{},end:()=>{}});
+  assert.deepEqual(created[0],{cwd:worktree},'the session runs in the isolated checkout, not the repository');
+  assert.deepEqual(workspaces[0],{path:worktree,title:'Feishu 1'},'the checkout gets a workspace row of its own');
+  assert.equal(attached,'s9','the new session is a member of that workspace');
+  const saved=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));
+  assert.equal(saved.bugs[0].sessionId,'s9');
+  assert.equal(saved.bugs[0].workspaceId,'ws-wt','the row is recorded so retirement can delete it');
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});await rm(root,{recursive:true,force:true});}
+});
+test('an in-repo session joins the repository row and records no workspace to delete',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'feishu-inrepo-'));const root=await mkdtemp(join(tmpdir(),'feishu-inrepo-repo-'));const disposers=[];const routes=new Map();
+ const repo=join(root,'repo');const workspaces=[];let attached=null;
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+ try{
+  execFileSync('git',['init','-b','develop',repo]);git('config','user.email','t@e.test');git('config','user.name','T');
+  await writeFile(join(repo,'a'),'a');git('add','.');git('commit','-m','init');
+  const base=git('rev-parse','develop');
+  git('checkout','-q','-b','fix/feishu-2');
+  await writeFile(join(repo,'fix.txt'),'fixed');git('add','.');git('commit','-q','-m','fix');
+  const commit=git('rev-parse','HEAD');
+  await writeFile(join(dir,'state.json'),JSON.stringify({version:1,selection:{},bugs:[{id:'p:bug:2',remoteId:2,title:'Crash',status:'changes-requested',repo,cwd:repo,inRepo:true,branch:'fix/feishu-2',base,commit,dirty:0}],audit:[]}));
+  const sessions={create:async()=>({sessionId:'s3'}),prompt:async()=>({accepted:true}),list:async()=>({items:[]}),inspect:async()=>({events:[]})};
+  const registry={create:async(p,title)=>{workspaces.push({path:p,title});return {id:'ws-repo',attachSession:async id=>{attached=id;}};}};
+  const ctx={get:n=>n==='sessionController'?sessions:n==='workspaceRegistry'?registry:n==='taskBoard'?{snapshot:()=>({tasks:[]}),subscribe:()=>()=>{}}:undefined,connection:{admit:()=>({peer:{id:'owner'}}),browserPeer:{id:'owner'}},webServer:{register:r=>{routes.set(r.path,r.handler);return()=>routes.delete(r.path);}},tools:{register:()=>()=>{}},effect(fn){const d=fn();if(d)disposers.push(d);}};
+  await apply(ctx,{storageDir:dir});
+  const req=Readable.from([Buffer.from(JSON.stringify({action:'retry',id:'p:bug:2',feedback:'still crashes'}))]);
+  req.method='POST';req.headers={'content-type':'application/json','x-dsh-feishu-bugs':'1'};
+  await routes.get('/feishu-bugs/api')(req,{writeHead:()=>{},end:()=>{}});
+  assert.deepEqual(workspaces[0],{path:repo,title:'repo'},'the repository directory adopts the session');
+  assert.equal(attached,'s3','the session joins the existing repository row');
+  const saved=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));
+  assert.equal(saved.bugs[0].workspaceId,undefined,'verification must never delete the repository row');
+ }finally{disposers.reverse().forEach(f=>f());await rm(dir,{recursive:true,force:true});await rm(root,{recursive:true,force:true});}
+});

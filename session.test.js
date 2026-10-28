@@ -37,10 +37,10 @@ test('a direct Host prompt receives the cancellation signal required for admissi
   assert.deepEqual(await runner.launch({cwd:'/repo',prompt:'fix it'}),{sessionId:'s1'});
   assert.equal(admitted,true);
 });
-test('a registered workspace is preferred over a bare directory',async()=>{
+test('a session always starts in the repair directory, never in a workspace path',async()=>{
   const {calls,runner}=fake();
-  await runner.launch({cwd:'/repo',workspaceId:'ws1',prompt:'x'});
-  assert.deepEqual(calls[0],['create',{workspaceId:'ws1'}]);
+  await runner.launch({cwd:'/repo/.worktrees/bug-1',prompt:'x'});
+  assert.deepEqual(calls[0],['create',{cwd:'/repo/.worktrees/bug-1'}]);
 });
 test('a missing model selection leaves the session default alone',async()=>{
   const {calls,runner}=fake();
