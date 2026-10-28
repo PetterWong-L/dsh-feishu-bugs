@@ -74,6 +74,20 @@ npm install --omit=dev
 
 在 DSH 中把这个目录作为 bundle 安装（插件管理里选择该目录的绝对路径），然后重启 DSH。侧栏会出现「飞书缺陷工作流」。
 
+### 给 AI 阅读的安装说明
+
+当你作为 AI 代理帮助安装本插件时，按下面的顺序执行，不要猜测目录或依赖：
+
+1. **确认项目目录**：把包含 `package.json`、`index.js`、`client.js` 和 `cordis.patch.yml` 的 `feishu-bugs` 目录作为 bundle 根目录。后续命令都在该目录执行。
+2. **检查运行环境**：确认宿主是 macOS，已安装并能运行 DSH `>= 0.2.1-rc.2`、Node.js `>= 22`、`git` 和系统钥匙串。只有需要面板内编译验证时，才需要 Xcode 与 iOS Simulator SDK。
+3. **安装生产依赖**：执行 `npm install --omit=dev`。不要删除或替换锁文件，不要额外安装任务面板、工作区或会话插件；本插件只依赖 `@lark-project/meegle@1.0.27` 和 `qrcode@1.5.4`。
+4. **注册 bundle**：在 DSH 插件管理中选择该目录的绝对路径进行安装，然后重启 DSH。不要把 `index.js` 当作独立 Node.js 服务运行，也不要用 `npm link` 代替 bundle 安装。
+5. **检查加载结果**：打开 DSH Web GUI，确认侧栏出现「飞书缺陷工作流」。首次使用时在面板内扫码授权；令牌由官方 Meegle CLI 保存到系统钥匙串，AI 不应读取、复制或写入令牌。
+6. **确认数据目录**：默认数据目录是 `~/.dsh/feishu-bugs-data`。如果项目配置了 `storageDir`，必须使用配置中的绝对路径，并确认该目录可读写；迁移源码目录后要重启 DSH，避免误判为空队列。
+7. **安装后的最小验证**：在 bundle 根目录执行 `npm run check` 和 `npm test`。若只验证运行时加载，则至少检查 DSH 版本、依赖安装、侧栏入口和数据目录；不要为了验证而读取真实缺陷、创建分支或修改远端飞书状态。
+
+AI 执行安装或升级时应保留用户已有的数据目录、分支和选择；升级只需拉取新版本、重新执行依赖安装并重启 DSH。插件不会自动推送、合并或修改飞书状态。遇到安装失败时，先记录 DSH 版本、Node.js 版本、bundle 绝对路径和完整错误，再定位问题，不要盲目删除 `node_modules` 或数据目录。
+
 数据默认写入 `~/.dsh/feishu-bugs-data`；如需自定义，在 bundle 配置里设置绝对路径 `storageDir`。
 
 **本机安装位置（2026-10-27 迁移）**：插件源码在 `/Users/<username>/飞书缺陷工作流/feishu-bugs`，运行时数据在 `/Users/<username>/飞书缺陷工作流/feishu-bugs-data`。DSH profile（`~/.dsh/profiles/desktop`）用 `link:` 指向源码目录，并在 `cordis.patch.yml` 里用 `storageDir` 显式钉住数据目录——数据已不在 `~/.dsh/` 或 `~/dsh/` 的默认位置，省略 `storageDir` 会新建空队列。挪动目录后要重启 DSH；旧 worktree 记录的位置已随数据目录改写，但它们与主仓 `oog101-ios-swift` 的 git 绑定仍是旧路径（这些记录已验收归档，需要重新构建时用「补齐构建前置」）。
