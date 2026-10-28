@@ -1,8 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
 import {Workflow} from './workflow.js';
 const setup=()=>{const state={bugs:[],audit:[]};return new Workflow(state,{save:async()=>{},prepare:async()=>({cwd:'/isolated',branch:'fix/test'}),launch:async()=>({taskId:Math.random().toString()})});};
-test('different bug starts cannot violate single running invariant',async()=>{const w=setup();await w.sync([{id:'a',title:'Crash'},{id:'b',title:'Blank page'}]);const r=await Promise.allSettled([w.start('a'),w.start('b')]);assert.equal(r.filter(v=>v.status==='fulfilled').length,1);});
-test('sync repository mismatch refuses instead of silently repairing wrong repo',async()=>{const w=setup();await w.sync([{id:'a',title:'Crash',repo:'/A'}]);await assert.rejects(w.sync([{id:'a',title:'Crash',repo:'/B'}]),/repository/);assert.equal(w.bug('a').repo,'/A');});
+test('different bug starts cannot violate single running invariant',async()=>{const w=setup();await w.sync([{id:'a',remoteStatus:'BUG',title:'Crash'},{id:'b',remoteStatus:'BUG',title:'Blank page'}]);const r=await Promise.allSettled([w.start('a'),w.start('b')]);assert.equal(r.filter(v=>v.status==='fulfilled').length,1);});
+test('sync repository mismatch refuses instead of silently repairing wrong repo',async()=>{const w=setup();await w.sync([{id:'a',remoteStatus:'BUG',title:'Crash',repo:'/A'}]);await assert.rejects(w.sync([{id:'a',remoteStatus:'BUG',title:'Crash',repo:'/B'}]),/repository/);assert.equal(w.bug('a').repo,'/A');});
 
 test('retry feedback uses inline UI, never window.prompt (unsupported in Electron)', async () => {
   const { readFile } = await import('node:fs/promises');
@@ -38,7 +38,7 @@ test('an in-repo row still offers verification buttons', async () => {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8');
   const line = source.split('\n').find(l => l.includes("b.status==='awaiting-verification'&&h(React.Fragment,null"));
   assert.ok(line, 'verification row must render');
-  assert.match(line, /b\.cwd!==b\.repo&&button\(t\('checkoutBranch'\)/, 'checkout stays worktree-only');
+  assert.match(source, /b\.status==='awaiting-verification'&&b\.cwd!==b\.repo&&button\(t\('checkoutBranch'\)/, 'checkout stays worktree-only');
   assert.match(line, /action:'verify',id:b\.id,passed:true/, 'pass must render for in-repo rows');
   assert.match(line, /action:'verify',id:b\.id,passed:false/, 'reject must render for in-repo rows');
 });

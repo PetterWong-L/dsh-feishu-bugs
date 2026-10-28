@@ -62,3 +62,21 @@ test('status lookup fails closed when the type exposes no status options',async(
  await assert.rejects(api.statuses('oog','issue'),/no status options/);
  await assert.rejects(api.statuses('oog',''),/Invalid project or type key/);
 });
+test('reads item-specific transitions with real IDs and current state',async()=>{
+ const calls=[];const api=new MeegleAPI(async args=>{calls.push(args);return {state_key:'RESOLVED',state_name:'APPROVED',transition:[{id:5475847,state_key:'CLOSED',state_name:'CLOSED',confirm_form:null},{id:8,state_key:'NEXT',state_name:'Next',confirm_form:{fields:[]}}]};});
+ assert.deepEqual(await api.stateTransitions('p','bug',1),{current:{key:'RESOLVED',name:'APPROVED'},options:[{id:'5475847',key:'CLOSED',name:'CLOSED',requiresForm:false},{id:'8',key:'NEXT',name:'Next',requiresForm:true}]});
+ assert.deepEqual(calls[0],['workflow','list-state-transitions','--project-key','p','--work-item-id','1','--work-item-type','bug','--auto-paginate']);
+});
+test('state writes recheck allowed transitions, use official command and verify readback',async()=>{
+ const calls=[];let closed=false;const api=new MeegleAPI(async args=>{calls.push(args);if(args.includes('--help'))return '--project-key string --work-item-id string --transition-id string';if(args[1]==='transition-state'){closed=true;return {data:{},error:null};}return {state_key:closed?'CLOSED':'OPEN',state_name:closed?'Closed':'Bug',transition:closed?[]:[{id:7,state_key:'CLOSED',state_name:'Closed',confirm_form:null}]};});
+ assert.deepEqual(await api.transitionState('p','bug',1,'7','CLOSED'),{current:{key:'CLOSED',name:'Closed'},options:[]});
+ assert.ok(calls.some(a=>JSON.stringify(a)===JSON.stringify(['workflow','transition-state','--project-key','p','--work-item-id','1','--transition-id','7'])));
+ await assert.rejects(api.transitionState('p','bug',1,'7','CLOSED'),/no longer available/);
+});
+test('malformed metadata, mandatory forms and remote errors cannot report success',async()=>{
+ const api=new MeegleAPI(async()=>({state_key:'OPEN',state_name:'Bug',transition:[{id:7,state_key:'CLOSED',state_name:'Closed',confirm_form:{}}]}));
+ await assert.rejects(api.transitionState('p','bug',1,'7','CLOSED'),/飞书/);
+ await assert.rejects(api.transitionState('p','bug',1,'7','OTHER'),/no longer available/);
+ await assert.rejects(new MeegleAPI(async()=>({state_key:'OPEN',transition:[]})).stateTransitions('p','bug',1),/Unsupported/);
+ await assert.rejects(new MeegleAPI(async()=>({err_code:1})).stateTransitions('p','bug',1));
+});

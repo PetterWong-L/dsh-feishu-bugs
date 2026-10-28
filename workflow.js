@@ -8,6 +8,8 @@ export function similarity(a,b) {
   const grams=s=>new Set(Array.from({length:Math.max(0,s.length-1)},(_,i)=>s.slice(i,i+2)));
   const x=grams(a),y=grams(b);return 2*[...x].filter(g=>y.has(g)).length/(x.size+y.size||1);
 }
+const repairable=b=>['BUG','REOPEN','REOPENED'].includes(String(b.remoteStatus??'').trim().toUpperCase());
+const unstarted=b=>!b.cwd&&!b.branch&&!b.taskId&&!b.sessionId&&['imported','queued','duplicate-review'].includes(b.status);
 export class Workflow {
   constructor(state,deps) { this.state=state;this.deps=deps;this.tail=Promise.resolve(); }
   locked(fn) { const p=this.tail.then(fn);this.tail=p.catch(()=>{});return p; }
@@ -17,9 +19,18 @@ export class Workflow {
     for(const item of items){const old=this.state.bugs.find(b=>b.id===item.id);if(old&&old.repo!==item.repo)throw Error('Bug repository binding differs; finish existing workflow before selecting another repository');}
     for(const item of items) {
       const old=this.state.bugs.find(b=>b.id===item.id);
-      if(old) { old.title=item.title;old.description=item.description;continue; }
-      const candidates=this.state.bugs.filter(b=>similarity(b.title,item.title)>=0.72).map(b=>({id:b.id,title:b.title,score:similarity(b.title,item.title)}));
-      const b={...item,candidates,status:candidates.length?'duplicate-review':'queued'};this.state.bugs.push(b);
+      if(old) {
+        old.title=item.title;old.description=item.description;old.remoteStatus=item.remoteStatus;
+        // Refresh untouched imports, but keep executions and human duplicate decisions.
+        if(!unstarted(old))continue;
+        if(!repairable(old)){old.status='imported';old.candidates=[];continue;}
+        if(old.status!=='imported')continue;
+        if(old.duplicateDecision==='distinct'){old.status='queued';continue;}
+      }
+      const candidates=repairable(item)?this.state.bugs.filter(b=>b.id!==item.id&&similarity(b.title,item.title)>=0.72).map(b=>({id:b.id,title:b.title,score:similarity(b.title,item.title)})):[];
+      const status=repairable(item)?(candidates.length?'duplicate-review':'queued'):'imported';
+      if(old)Object.assign(old,{candidates,status});
+      else this.state.bugs.push({...item,candidates,status});
     }
     await this.deps.save();return this.state;
   }); }
@@ -32,6 +43,7 @@ export class Workflow {
   start(id,note) { return this.locked(async()=>{
     if(this.state.bugs.some(b=>['preparing','running'].includes(b.status)))throw Error('One bug is already running');
     const b=this.bug(id);if(b.status!=='queued')throw Error('bug not queued: duplicate review or existing execution');
+    if(!repairable(b))throw Error('bug not eligible for repair; refresh the Feishu list (BUG / REOPENED required)');
     b.note=cleanNote(note);
     b.status='preparing';await this.record('start',b);
     try { Object.assign(b,await this.deps.prepare(b));await this.deps.save();Object.assign(b,await this.deps.launch(b));b.status='running';await this.record('launched',b); }
@@ -71,7 +83,7 @@ export class Workflow {
 }
 export function pruneUnstarted(bugs,keepIds) {
   const keep=new Set(keepIds);
-  return bugs.filter(b=>keep.has(b.id)||!['queued','duplicate-review'].includes(b.status)||b.cwd||b.taskId);
+  return bugs.filter(b=>keep.has(b.id)||!unstarted(b));
 }
 // Items that survived pruning but left the current Feishu filter keep their work,
 // yet are flagged so the list can hide them until the user removes them.

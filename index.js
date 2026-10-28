@@ -232,13 +232,19 @@ export async function apply(ctx,config={}) {
    if(!args||typeof args.action!=='string')throw Error('Action required');
    if(args.action==='auth-start'){const generation=auth.generation;if(await auth.check()||generation!==auth.generation)return;return auth.begin();}
    if(args.action==='auth-check')return auth.check();
-   if(['projects','types','sync'].includes(args.action)&&!await auth.check())throw Error('Scan the official authorization code first');
+   if(['projects','types','requirements','sync'].includes(args.action)&&!await auth.check())throw Error('Scan the official authorization code first');
    if(args.action==='projects'){
     const projects=await api.projects();catalog.projects=projects;catalog.types=[];catalog.projectKey=null;await save();return;
    }
    if(args.action==='types'){
     if(!catalog.projects.some(p=>p.key===args.projectKey))throw Error('Select an accessible project from metadata first');
-    const types=await api.types(args.projectKey);catalog.types=types;catalog.projectKey=args.projectKey;catalog.statuses=[];catalog.statusesFor=null;await save();return;
+    const types=await api.types(args.projectKey);catalog.types=types;catalog.projectKey=args.projectKey;catalog.requirements=null;catalog.statuses=[];catalog.statusesFor=null;await save();return;
+   }
+   if(args.action==='requirements'){
+    const project=catalog.projects.find(p=>p.key===args.projectKey);
+    if(!project||catalog.projectKey!==args.projectKey||!catalog.types.some(t=>t.key===args.typeKey))throw Error('Read project/type metadata before loading requirements');
+    const result=await api.requirements({projectKey:project.key,simpleName:project.simpleName,typeKey:args.typeKey});
+    catalog.requirements={...result,projectKey:project.key,typeKey:args.typeKey};await save();return;
    }
    if(args.action==='statuses'){
     if(!catalog.projects.some(p=>p.key===args.projectKey)||catalog.projectKey!==args.projectKey)throw Error('Read project and type metadata first');
@@ -250,7 +256,11 @@ export async function apply(ctx,config={}) {
     const s=args.selection,project=catalog.projects.find(p=>p.key===s.projectKey),type=catalog.types.find(t=>t.key===s.typeKey);
     if(!project||!type||catalog.projectKey!==s.projectKey)throw Error('Read and select project/type metadata before importing');
     const statuses=Array.isArray(s.statuses)&&s.statuses.length?s.statuses:['BUG','REOPENED'];
-    const selection={repo:s.repo,projectKey:project.key,projectName:project.name,simpleName:project.simpleName,typeKey:type.key,typeName:type.name,statuses};
+    const requirementId=s.requirementId??'',requirements=catalog.requirements;
+    if(typeof requirementId!=='string')throw Error('Invalid requirement selection');
+    const requirement=requirements?.projectKey===project.key&&requirements?.typeKey===type.key?requirements.options.find(o=>o.id===requirementId):null;
+    if(requirementId&&!requirement)throw Error('请先读取当前项目及类型的所属需求，并重新选择');
+    const selection={repo:s.repo,projectKey:project.key,projectName:project.name,simpleName:project.simpleName,typeKey:type.key,typeName:type.name,statuses,requirementId,requirementName:requirement?.name??''};
     const result=await api.bugs(selection);await workflow.sync(result.items);
     // A complete (untruncated) sync is authoritative for untouched imports: items
     // outside the current filter disappear instead of lingering from an older sync.
@@ -290,7 +300,28 @@ export async function apply(ctx,config={}) {
    if(args.action==='start'){if(state.bugs.some(b=>['running','preparing'].includes(b.status)))throw Error('One bug is already running');if(state.bugs.find(b=>b.id===args.id)?.gone)throw Error('This bug left the current Feishu filter; refresh the list before starting it');return workflow.start(args.id,cleanNote(args.note));}
    if(args.action==='queue'){queue=args.enabled===true;await pump();return;}
    if(args.action==='retry')return workflow.retry(args.id,args.feedback,launch);
-  if(args.action==='commit'){
+  if(['remote-statuses','remote-status'].includes(args.action)){
+    const b=state.bugs.find(item=>item.id===args.id);
+    if(!b||b.status!=='verified')throw Error('Only verified bugs may change Feishu status');
+    if(!await auth.check())throw Error('Scan the official authorization code first');
+    const previous=b.remoteWorkflow;
+    if(args.action==='remote-statuses'){
+     const result=await api.stateTransitions(b.projectKey,b.typeKey,b.remoteId);
+     b.remoteWorkflow={...result,checkedAt:new Date().toISOString(),updatedAt:previous?.updatedAt};await save();return;
+    }
+    try{
+     const result=await api.transitionState(b.projectKey,b.typeKey,b.remoteId,args.transitionId,args.stateKey);
+     const at=new Date().toISOString();
+     b.remoteWorkflow={...result,checkedAt:at,updatedAt:at};
+     state.audit.push({time:at,action:'feishu-status-updated',id:b.id,from:previous?.current?.key,to:result.current.key});state.audit=state.audit.slice(-1000);
+     await save();
+    }catch(e){
+     // A remote write can succeed before its readback fails; invalidate cached choices.
+     delete b.remoteWorkflow;await save();throw e;
+    }
+    return;
+   }
+   if(args.action==='commit'){
    const b=state.bugs.find(x=>x.id===args.id);if(!b?.cwd)throw Error('This bug has no worktree');
    if(b.status==='running'||hasOpen(boardTask(b.taskId)))throw Error('An execution is still running for this bug');
    await validateWorktree(b);
