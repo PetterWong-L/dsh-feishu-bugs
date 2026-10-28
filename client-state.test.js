@@ -28,6 +28,35 @@ test('changing a work item type clears requirement selection and hides stale opt
  const select=nodes(tree).find(n=>n.type==='select'&&n.props['aria-label']==='所属需求（缺陷）');assert.equal(select.props.value,'');assert.equal(text(select).includes('过期需求'),false);
 });
 
+test('reference layout separates connection rail, defects, repair controls and history',async()=>{
+ const p=await panel({auth:{state:'authenticated'},bugs:[]});const tree=p.render();
+ const rail=nodes(tree).find(n=>n.type==='aside'&&n.props.className==='fb-sidebar');
+ const main=nodes(tree).find(n=>n.props.className==='fb-main');
+ assert.ok(rail);assert.ok(main);assert.ok(button(rail,'读取分配给我的 Bug'));
+ assert.equal(button(main,'读取分配给我的 Bug'),undefined);
+ assert.ok(nodes(main).some(n=>n.props['aria-label']==='本轮缺陷'));
+ const repair=nodes(main).find(n=>n.props['aria-label']==='修复与验收');
+ assert.ok(repair);assert.ok(nodes(repair).some(n=>n.type==='button'));
+ assert.equal(nodes(rail).find(n=>n.type==='details'&&text(n).includes('选择本轮任务范围')).props.open,true);
+});
+
+test('defect search combines with status and searches IDs, titles and repair notes locally',async()=>{
+ const p=await panel({auth:{state:'authenticated'},bugs:[
+  {id:'a',remoteId:123,title:'Login bug',status:'queued'},
+  {id:'b',remoteId:456,title:'Settings',summary:'LOGIN repaired',status:'verified'},
+  {id:'c',remoteId:789,title:'Gone login',status:'queued',gone:true}
+ ]});
+ const search=tree=>nodes(tree).find(n=>n.props['aria-label']==='搜索编号、标题或修复记录');
+ const cards=tree=>nodes(tree).filter(n=>n.type==='article').map(n=>n.props.key);
+ let tree=p.render();assert.deepEqual(cards(tree),['a','b']);
+ search(tree).props.onChange({target:{value:'  LOGIN  '}});tree=p.render();assert.deepEqual(cards(tree),['a','b']);
+ button(tree,'待修复').props.onClick();tree=p.render();assert.deepEqual(cards(tree),['a']);
+ search(tree).props.onChange({target:{value:'#456'}});tree=p.render();assert.deepEqual(cards(tree),[]);
+ button(tree,'全部').props.onClick();tree=p.render();assert.deepEqual(cards(tree),['b']);
+ search(tree).props.onChange({target:{value:''}});tree=p.render();assert.deepEqual(cards(tree),['a','b']);
+ assert.equal(p.calls.length,0,'local search must not write to Feishu or launch tasks');
+});
+
 const nodes=tree=>typeof tree==='object'&&tree?[tree,...tree.children.flatMap(nodes)]:[];
 const text=tree=>typeof tree==='string'?tree:tree?.children?.map(text).join('')??'';
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&text(n)===label);

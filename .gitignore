@@ -2,3 +2,4 @@ node_modules/
 .DS_Store
 *.log
 feishu-bugs-data/
+.panel-check/
