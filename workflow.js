@@ -74,6 +74,12 @@ export class Workflow {
     if(this.deps.inspect){try{Object.assign(b,await this.deps.inspect(b));}catch{}}
     await this.record(result,b);return b;
   }); }
+  complete(id,owner) { return this.locked(async()=>{
+    if(!owner)throw Error('owner confirmation required');const b=this.bug(id);
+    if(b.status==='completed')return b;
+    if(['preparing','running'].includes(b.status)||b.build?.state==='running')throw Error('An execution or build is still running for this bug');
+    b.status='completed';b.completedAt=new Date().toISOString();await this.record('completed',b);return b;
+  }); }
   verify(id,passed,owner) { return this.locked(async()=>{
     if(!owner)throw Error('owner confirmation required');const b=this.bug(id);if(b.status!=='awaiting-verification')throw Error('not awaiting verification');
     b.status=passed?'verified':'changes-requested';await this.record(passed?'verified':'changes-requested',b);

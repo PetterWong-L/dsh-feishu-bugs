@@ -50,6 +50,23 @@ test('a run that failed before its branch existed can restart without feedback',
  assert.equal(b.status,'running');assert.equal(b.taskId,'task-9');assert.equal(b.error,undefined);
  assert.deepEqual(calls,['prepare','launch:']);
 });
+test('owner completion persists a terminal state without verification or cleanup side effects',async()=>{
+ const {w,state,calls}=setup();await w.sync([{id:'1',remoteStatus:'BUG',title:'Done elsewhere'}]);
+ await assert.rejects(w.complete('1',false),/owner/);
+ const b=await w.complete('1',true);assert.equal(b.status,'completed');assert.ok(Date.parse(b.completedAt));
+ assert.equal(state.audit.at(-1).action,'completed');assert.deepEqual(calls,[]);
+ const at=b.completedAt;await w.complete('1',true);assert.equal(b.completedAt,at);assert.equal(state.audit.length,1);
+ await w.sync([{id:'1',remoteStatus:'REOPENED',title:'Updated'}]);assert.equal(b.status,'completed');
+ assert.equal(pruneUnstarted(state.bugs,[]).length,1);
+ await assert.rejects(w.start('1'),/not queued/);await assert.rejects(w.retry('1','retry',async()=>{}),/Retry requires/);
+});
+test('completion refuses active repair and build work',async()=>{
+ for(const fields of [{status:'preparing'},{status:'running'},{status:'verified',build:{state:'running'}}]){
+  const {w,state}=setup();state.bugs.push({id:'1',...fields});
+  await assert.rejects(w.complete('1',true),/still running/);assert.equal(state.bugs[0].completedAt,undefined);
+ }
+});
+
 test('a failed execution surfaces its reason on the card',async()=>{
  const state={bugs:[],audit:[]};
  const w=new Workflow(state,{save:async()=>{},prepare:async b=>({branch:'fix/x',cwd:'/tmp/wt'}),launch:async()=>({taskId:'t1'})});

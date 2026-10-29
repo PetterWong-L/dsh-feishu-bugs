@@ -57,6 +57,25 @@ test('defect search combines with status and searches IDs, titles and repair not
  assert.equal(p.calls.length,0,'local search must not write to Feishu or launch tasks');
 });
 
+test('mark complete updates the card, disables tools, and can be filtered',async()=>{
+ const bug={id:'done',remoteId:7,status:'verified',title:'Finished',repo:'/repo',cwd:'/repo',branch:'fix/7'};
+ const base={auth:{state:'authenticated'},bugs:[bug]},p=await panel(base);let tree=p.render();
+ const card=()=>nodes(tree).find(n=>n.type==='article');
+ assert.equal(button(card(),'标记已完成').props.disabled,false);
+ p.respond({...base,bugs:[{...bug,status:'completed',completedAt:'2026-10-29T03:00:00.000Z'}]});
+ await button(card(),'标记已完成').props.onClick();tree=p.render();
+ assert.deepEqual(p.calls,[{action:'complete',id:'done'}]);assert.match(text(card()),/已完成/);
+ for(const label of ['编译验证','在 Xcode 打开','已完成'])assert.equal(button(card(),label).props.disabled,true);
+ assert.equal(button(card(),'修改飞书状态'),undefined);assert.equal(button(card(),'主仓切回 develop'),undefined);
+ button(tree,'已完成').props.onClick();tree=p.render();assert.equal(nodes(tree).filter(n=>n.type==='article').length,1);
+});
+test('completion stays disabled while a repair or build is active',async()=>{
+ for(const fields of [{status:'running'},{status:'preparing'},{status:'verified',build:{state:'running'}}]){
+  const p=await panel({auth:{state:'authenticated'},bugs:[{id:'busy',remoteId:1,repo:'/repo',...fields}]});
+  const tree=p.render();assert.equal(button(tree,'标记已完成').props.disabled,true);
+ }
+});
+
 const nodes=tree=>typeof tree==='object'&&tree?[tree,...tree.children.flatMap(nodes)]:[];
 const text=tree=>typeof tree==='string'?tree:tree?.children?.map(text).join('')??'';
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&text(n)===label);

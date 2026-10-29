@@ -291,6 +291,13 @@ export async function apply(ctx,config={}) {
     }
     state.model=next;await save();return;
    }
+   if(args.action==='complete'){
+    const b=workflow.bug(args.id);
+    if(b.status==='completed')return b;
+    if(hasOpen(boardTask(b.taskId))||(b.sessionId&&(await sessions.state(b.sessionId)).running))throw Error('An execution is still running for this bug');
+    return workflow.complete(args.id,true);
+   }
+   if(['start','retry','decide','verify','commit','provision','build','checkout','open-xcode','remote-statuses','remote-status'].includes(args.action)&&state.bugs.find(b=>b.id===args.id)?.status==='completed')throw Error('This task is completed; further operations are disabled');
    if(args.action==='decide')return workflow.decide(args.id,args.decision,true);
    if(args.action==='verify'){
     if(typeof args.passed!=='boolean')throw Error('Verification result required');
